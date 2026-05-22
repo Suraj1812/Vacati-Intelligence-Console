@@ -46,7 +46,7 @@ export function KnowledgeSidebar({
           <StatusRow
             icon={CheckCircle2}
             label="Embeddings"
-            value={knowledge?.embeddingStatus === "ready" ? "Ready" : "Local"}
+            value={knowledge?.embeddingStatus === "ready" ? "Ready" : "Indexing"}
           />
           <StatusRow icon={Database} label="Indexed chunks" value={`${knowledge?.totalChunks ?? 0}`} />
           <StatusRow icon={Activity} label="Retrieval hits" value={`${hitCount}`} />
@@ -65,7 +65,7 @@ export function KnowledgeSidebar({
             <div className="rounded-md border border-dashed border-white/[0.12] p-4">
               <p className="text-sm text-zinc-300">No documents yet.</p>
               <p className="mt-1 text-xs leading-5 text-zinc-500">
-                Upload a PDF, markdown file, or text document to start asking questions.
+                Upload a PDF, DOCX, markdown file, or text document to start asking questions.
               </p>
             </div>
           ) : null}

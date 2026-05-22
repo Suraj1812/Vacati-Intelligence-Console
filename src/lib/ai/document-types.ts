@@ -1,6 +1,6 @@
 export type IngestibleDocument = {
   name: string;
-  type: "pdf" | "manual" | "menu" | "wine-guide" | "policy" | "text";
+  type: "pdf" | "docx" | "markdown" | "text";
   summary: string;
   tags: string[];
   content: string;

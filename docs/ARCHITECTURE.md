@@ -5,11 +5,11 @@
 The first implementation had a polished UI and a useful RAG prototype, but the platform core needed hardening:
 
 - Generation was too Gemini-centric.
-- Embeddings had no provider strategy beyond Gemini plus fallback.
+- Embeddings had no provider strategy beyond Gemini.
 - Vector storage was local-only.
 - Client streaming and knowledge state lived in a single large component.
 - Environment variables were not validated.
-- AI health, retries, caching, and provider fallback were missing.
+- AI health, retries, caching, and production observability were missing.
 - CI/CD, Docker, pgvector migration, and deployment docs were absent.
 
 ## Improvement Strategy
@@ -48,13 +48,13 @@ Supported providers:
 - `vllm`
 - `lmstudio`
 
-The active provider is selected by `AI_PROVIDER`. The fallback provider is selected by `AI_FALLBACK_PROVIDER`.
+The active provider is selected by `AI_PROVIDER`. Provider failures fail closed instead of generating replacement answers.
 
 ## RAG Flow
 
 ```mermaid
 flowchart LR
-  A["Upload PDF / Markdown / Text"] --> B["Document loader"]
+  A["Upload PDF / DOCX / Markdown / Text"] --> B["Document loader"]
   B --> C["Section-aware chunking"]
   C --> D["Embedding service"]
   D --> E["Vector store: memory or pgvector"]
@@ -80,4 +80,4 @@ Production mode should use:
 
 ## Observability
 
-The platform includes structured server logging, status reporting at `/status`, health checks at `/api/health`, token estimates, latency metrics, provider fallback counts, and response cache hit counts.
+The platform includes structured server logging, status reporting at `/status`, health checks at `/api/health`, token estimates, latency metrics, provider error counts, ingestion counts, retrieval hit counts, and response cache hit counts.

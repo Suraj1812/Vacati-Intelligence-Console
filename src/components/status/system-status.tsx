@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowLeft, CheckCircle2, CircleAlert, Cpu, Database, Gauge, KeyRound, RadioTower, Timer } from "lucide-react";
+import { ArrowLeft, CheckCircle2, CircleAlert, Cpu, Database, Gauge, RadioTower, Timer } from "lucide-react";
 
 import type { SystemStatus as SystemStatusType } from "@/lib/ai/types";
 import { Badge } from "@/components/ui/badge";
@@ -41,13 +41,13 @@ export function SystemStatus({ status }: { status: SystemStatusType }) {
             <div className="space-y-7">
               <StatusLine icon={RadioTower} label="Active provider" value={status.provider} />
               <StatusLine icon={Cpu} label="Model" value={status.model} />
-              <StatusLine icon={KeyRound} label="Fallback" value={status.fallbackProvider} />
               <StatusLine icon={Database} label="Vector database" value={status.vectorDatabase} />
               <StatusLine
                 icon={Gauge}
                 label="Embeddings"
                 value={`${status.embeddingProvider} / ${status.embeddingModel}`}
               />
+              <StatusLine icon={Database} label="Indexed chunks" value={`${status.ingestion.chunks}`} />
             </div>
 
             <div className="space-y-6">
@@ -96,7 +96,9 @@ export function SystemStatus({ status }: { status: SystemStatusType }) {
 
               <div className="mt-6 grid gap-4 sm:grid-cols-2">
                 <Metric label="Cache hits" value={status.cache.hits.toLocaleString()} unit="responses" />
-                <Metric label="Provider errors" value={status.errors.provider.toLocaleString()} unit="fallbacks" />
+                <Metric label="Provider errors" value={status.errors.provider.toLocaleString()} unit="errors" />
+                <Metric label="Documents" value={status.ingestion.documents.toLocaleString()} unit="indexed" />
+                <Metric label="Last retrieval" value={status.ingestion.lastRetrievalHits.toLocaleString()} unit="hits" />
               </div>
             </div>
           </div>

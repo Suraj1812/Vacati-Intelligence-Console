@@ -31,7 +31,6 @@ export type VectorProvider = z.infer<typeof vectorProviderSchema>;
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   AI_PROVIDER: z.preprocess(emptyToUndefined, aiProviderSchema.optional()),
-  AI_FALLBACK_PROVIDER: aiProviderSchema.default("local"),
   GEMINI_API_KEY: optionalString,
   GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
   GOOGLE_CLOUD_PROJECT: optionalString,
@@ -54,14 +53,12 @@ const envSchema = z.object({
   RAG_TOP_K: z.coerce.number().int().min(2).max(12).default(4),
   MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(50).default(12),
   RESPONSE_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).max(86400).default(900),
-  SEED_DEMO_KNOWLEDGE: z.coerce.boolean().default(true),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
 
 export type AppEnv = {
   nodeEnv: "development" | "test" | "production";
   aiProvider: AiProvider;
-  fallbackProvider: AiProvider;
   geminiApiKey?: string;
   geminiModel: string;
   googleCloudProject?: string;
@@ -84,7 +81,6 @@ export type AppEnv = {
   ragTopK: number;
   maxUploadMb: number;
   responseCacheTtlSeconds: number;
-  seedDemoKnowledge: boolean;
   logLevel: "debug" | "info" | "warn" | "error";
 };
 
@@ -124,7 +120,6 @@ export function getEnv(): AppEnv {
   return {
     nodeEnv: cachedEnv.NODE_ENV,
     aiProvider,
-    fallbackProvider: cachedEnv.AI_FALLBACK_PROVIDER,
     geminiApiKey: cachedEnv.GEMINI_API_KEY,
     geminiModel: cachedEnv.GEMINI_MODEL,
     googleCloudProject: cachedEnv.GOOGLE_CLOUD_PROJECT,
@@ -147,7 +142,6 @@ export function getEnv(): AppEnv {
     ragTopK: cachedEnv.RAG_TOP_K,
     maxUploadMb: cachedEnv.MAX_UPLOAD_MB,
     responseCacheTtlSeconds: cachedEnv.RESPONSE_CACHE_TTL_SECONDS,
-    seedDemoKnowledge: cachedEnv.SEED_DEMO_KNOWLEDGE,
     logLevel: cachedEnv.LOG_LEVEL,
   };
 }

@@ -7,35 +7,18 @@ export class EmbeddingService {
     const env = getEnv();
 
     if (env.embeddingProvider === "gemini" && env.geminiApiKey) {
-      try {
-        return await Promise.all(texts.map((text) => this.embedWithGemini(text)));
-      } catch (error) {
-        logger.warn("Gemini embedding failed; falling back to local embeddings", {
-          error: error instanceof Error ? error.message : "unknown",
-        });
-      }
+      return Promise.all(texts.map((text) => this.embedWithGemini(text)));
     }
 
     if (env.embeddingProvider === "ollama") {
-      try {
-        return await Promise.all(texts.map((text) => this.embedWithOllama(text)));
-      } catch (error) {
-        logger.warn("Ollama embedding failed; falling back to local embeddings", {
-          error: error instanceof Error ? error.message : "unknown",
-        });
-      }
+      return Promise.all(texts.map((text) => this.embedWithOllama(text)));
     }
 
     if (env.embeddingProvider === "openai-compatible" && env.openAiCompatibleBaseUrl) {
-      try {
-        return await this.embedWithOpenAiCompatible(texts);
-      } catch (error) {
-        logger.warn("OpenAI-compatible embedding failed; falling back to local embeddings", {
-          error: error instanceof Error ? error.message : "unknown",
-        });
-      }
+      return this.embedWithOpenAiCompatible(texts);
     }
 
+    logger.debug("Using native local embeddings", { count: texts.length });
     return texts.map((text) => localEmbedding(text, env.embeddingDimensions));
   }
 
@@ -55,9 +38,11 @@ export class EmbeddingService {
     const vector =
       result.embeddings?.[0]?.values ?? result.embedding?.values ?? result.values ?? [];
 
-    return vector.length > 0
-      ? normalize(fitDimensions(vector, env.embeddingDimensions))
-      : localEmbedding(text, env.embeddingDimensions);
+    if (!vector.length) {
+      throw new Error("Gemini returned an empty embedding.");
+    }
+
+    return normalize(fitDimensions(vector, env.embeddingDimensions));
   }
 
   private async embedWithOllama(text: string) {
@@ -79,9 +64,11 @@ export class EmbeddingService {
       }),
     )) as { embedding?: number[] };
 
-    return result.embedding?.length
-      ? normalize(fitDimensions(result.embedding, env.embeddingDimensions))
-      : localEmbedding(text, env.embeddingDimensions);
+    if (!result.embedding?.length) {
+      throw new Error("Ollama returned an empty embedding.");
+    }
+
+    return normalize(fitDimensions(result.embedding, env.embeddingDimensions));
   }
 
   private async embedWithOpenAiCompatible(texts: string[]) {
@@ -107,9 +94,11 @@ export class EmbeddingService {
     )) as { data?: Array<{ embedding?: number[] }> };
 
     const vectors = result.data?.map((item) => item.embedding ?? []) ?? [];
-    return vectors.length === texts.length
-      ? vectors.map((vector) => normalize(fitDimensions(vector, env.embeddingDimensions)))
-      : texts.map((text) => localEmbedding(text, env.embeddingDimensions));
+    if (vectors.length !== texts.length || vectors.some((vector) => !vector.length)) {
+      throw new Error("OpenAI-compatible endpoint returned incomplete embeddings.");
+    }
+
+    return vectors.map((vector) => normalize(fitDimensions(vector, env.embeddingDimensions)));
   }
 }
 

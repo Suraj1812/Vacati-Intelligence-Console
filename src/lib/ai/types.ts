@@ -3,7 +3,7 @@ export type KnowledgeDocumentStatus = "queued" | "chunked" | "embedded" | "index
 export type KnowledgeDocument = {
   id: string;
   name: string;
-  type: "pdf" | "manual" | "menu" | "wine-guide" | "policy" | "text";
+  type: "pdf" | "docx" | "markdown" | "text";
   status: KnowledgeDocumentStatus;
   uploadedAt: string;
   chunkCount: number;
@@ -58,7 +58,7 @@ export type ChatMessage = {
 export type KnowledgeState = {
   documents: KnowledgeDocument[];
   totalChunks: number;
-  embeddingStatus: "ready" | "fallback" | "indexing";
+  embeddingStatus: "ready" | "indexing";
   retrievalHits: RetrievalHit[];
   activeSources: string[];
 };
@@ -67,7 +67,6 @@ export type SystemStatus = {
   provider: string;
   activeProviderId: string;
   model: string;
-  fallbackProvider: string;
   providerHealth: Array<{
     provider: string;
     healthy: boolean;
@@ -89,8 +88,8 @@ export type SystemStatus = {
   };
   health: {
     api: "healthy" | "degraded";
-    embeddings: "healthy" | "fallback";
-    grounding: "healthy";
+    embeddings: "healthy" | "degraded";
+    grounding: "healthy" | "degraded";
   };
   cache: {
     hits: number;
@@ -98,5 +97,11 @@ export type SystemStatus = {
   };
   errors: {
     provider: number;
+  };
+  ingestion: {
+    documents: number;
+    chunks: number;
+    activeSources: number;
+    lastRetrievalHits: number;
   };
 };

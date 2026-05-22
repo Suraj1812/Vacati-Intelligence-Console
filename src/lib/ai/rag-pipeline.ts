@@ -1,7 +1,7 @@
 import { chunkDocument, estimateTokens } from "@/lib/ai/chunking";
 import { EmbeddingService } from "@/lib/ai/embeddings";
 import { buildGroundedPrompt } from "@/lib/ai/prompts";
-import { getActiveProvider, getFallbackProvider } from "@/lib/ai/providers/registry";
+import { getActiveProvider } from "@/lib/ai/providers/registry";
 import type {
   Explainability,
   KnowledgeChunk,
@@ -12,7 +12,6 @@ import type {
 import type { IngestibleDocument } from "@/lib/ai/document-types";
 import { getVectorStore, type VectorStore } from "@/lib/ai/vector-store";
 import { getEnv } from "@/lib/config/env";
-import { demoDocuments } from "@/lib/data/demo-documents";
 import { logger } from "@/lib/observability/logger";
 import { TtlCache } from "@/lib/utils/ttl-cache";
 
@@ -51,11 +50,7 @@ export class RagPipeline {
   };
 
   static async create() {
-    const pipeline = new RagPipeline();
-    if (getEnv().seedDemoKnowledge) {
-      await pipeline.ingestDocuments(demoDocuments);
-    }
-    return pipeline;
+    return new RagPipeline();
   }
 
   async ingestDocuments(documents: IngestibleDocument[]) {
@@ -103,7 +98,7 @@ export class RagPipeline {
     };
   }
 
-  async retrieve(question: string, limit = 4) {
+  async retrieve(question: string, limit = getEnv().ragTopK) {
     if (!this.documents.size) {
       this.lastRetrievalHits = [];
       return [];
@@ -112,7 +107,9 @@ export class RagPipeline {
     const startedAt = performance.now();
     const [embedding] = await this.embeddings.embedTexts([question]);
     const candidates = await this.vectorStore.similaritySearch(embedding, Math.max(limit * 3, limit));
-    const hits = rerankHits(question, candidates).slice(0, limit);
+    const hits = rerankHits(question, candidates)
+      .filter((hit) => hit.score > 0.08 || lexicalOverlap(question, hit) > 0)
+      .slice(0, limit);
     this.lastRetrievalHits = hits;
     this.metrics.retrievalMs = Math.round(performance.now() - startedAt);
     this.metrics.promptTokens += estimateTokens(question);
@@ -120,7 +117,23 @@ export class RagPipeline {
   }
 
   async *answer(question: string) {
+    if (!this.documents.size) {
+      throw new Error("No indexed knowledge is available. Upload documents before asking questions.");
+    }
+
     const hits = await this.retrieve(question);
+    if (!hits.length) {
+      const refusal =
+        "I cannot answer from the current index because no relevant document context was retrieved for this question.";
+      const explainability = this.explain(question, hits);
+      this.metrics.completionTokens += estimateTokens(refusal);
+
+      yield { type: "token" as const, value: refusal };
+      yield { type: "sources" as const, value: [] };
+      yield { type: "explainability" as const, value: explainability };
+      return;
+    }
+
     const cacheKey = createCacheKey(question, hits);
     const cached = this.answerCache.get(cacheKey);
 
@@ -146,17 +159,15 @@ export class RagPipeline {
       }
     } catch (error) {
       this.metrics.providerErrors += 1;
-      logger.warn("Primary AI provider failed; switching to fallback", {
+      logger.error("Configured AI provider failed", {
         provider: provider.id,
         error: error instanceof Error ? error.message : "unknown",
       });
+      throw new Error("The configured AI provider failed before a grounded answer could be generated.");
+    }
 
-      const fallback = getFallbackProvider(hits);
-      this.metrics.activeProvider = fallback.id;
-      for await (const chunk of fallback.stream({ prompt: question })) {
-        completion += chunk.text;
-        yield { type: "token" as const, value: chunk.text };
-      }
+    if (!completion.trim()) {
+      throw new Error("The configured AI provider returned an empty grounded response.");
     }
 
     this.metrics.completionTokens += estimateTokens(completion);
@@ -177,7 +188,7 @@ export class RagPipeline {
     return {
       documents,
       totalChunks: this.vectorStore.count(),
-      embeddingStatus: getEnv().embeddingProvider === "local" ? "fallback" : "ready",
+      embeddingStatus: "ready",
       retrievalHits: this.lastRetrievalHits,
       activeSources: documents.map((document) => document.name),
     };
@@ -192,33 +203,28 @@ export class RagPipeline {
     };
   }
 
-  private explain(question: string, hits: RetrievalHit[]): Explainability {
+  private explain(_question: string, hits: RetrievalHit[]): Explainability {
     if (!hits.length) {
       return {
         why: "No indexed document context was available for this question.",
         confidence: 0,
-        flavorLogic: "Upload source documents so the answer can be grounded.",
+        flavorLogic: "No compatibility logic was generated because no source chunks were retrieved.",
         retrievedContext: [],
         tags: ["needs-source"],
       };
     }
 
-    const tags = Array.from(
-      new Set([
-        "retrieval-grounded",
-        "source-cited",
-        ...hits.flatMap((hit) => hit.tags),
-        inferQuestionTag(question),
-      ]),
-    ).filter(Boolean);
+    const evidenceTags = extractEvidenceTags(hits);
+    const tags = Array.from(new Set(["retrieval-grounded", "source-cited", ...hits.flatMap((hit) => hit.tags), ...evidenceTags])).filter(Boolean);
 
     const topScore = hits[0]?.score ?? 0;
-    const confidence = Math.min(0.94, Math.max(0.68, topScore * 0.72 + hits.length * 0.08));
+    const confidence = Math.min(0.94, Math.max(0.42, topScore * 0.74 + Math.min(hits.length, 4) * 0.06));
+    const sourceNames = Array.from(new Set(hits.map((hit) => hit.documentName))).slice(0, 3);
 
     return {
-      why: `The response uses ${hits.length} retrieved knowledge chunks, led by ${hits[0]?.documentName ?? "the active knowledge base"} and checked against adjacent operating guidance.`,
+      why: `The response is grounded in ${hits.length} retrieved chunk${hits.length === 1 ? "" : "s"} from ${sourceNames.join(", ")}. The top retrieval score was ${Math.round(topScore * 100)}%.`,
       confidence,
-      flavorLogic: inferFlavorLogic(question, tags),
+      flavorLogic: buildCompatibilityLogic(hits),
       retrievedContext: hits.slice(0, 3).map((hit) => `${hit.documentName}: ${hit.section}`),
       tags,
     };
@@ -232,37 +238,13 @@ export function getRagPipeline() {
   return pipelinePromise;
 }
 
-function inferQuestionTag(question: string) {
-  const value = question.toLowerCase();
-  if (value.includes("wine") || value.includes("pair")) return "pairing-query";
-  if (value.includes("guest") || value.includes("late")) return "service-recovery";
-  if (value.includes("tomato") || value.includes("lobster")) return "flavor-compatibility";
-  return "knowledge-query";
-}
-
-function inferFlavorLogic(question: string, tags: string[]) {
-  const value = question.toLowerCase();
-  if (value.includes("lobster")) {
-    return "Butter and preserved lemon create a body-plus-acidity problem: choose ripe citrus, restrained oak, and saline minerality.";
-  }
-
-  if (value.includes("tomato")) {
-    return "Tomato raises acidity and bitterness sensitivity, so low tannin and bright acid are prioritized.";
-  }
-
-  if (tags.includes("service-recovery")) {
-    return "Operational fit is driven by timing, specificity, dietary context, and manager escalation thresholds.";
-  }
-
-  return "The engine matches intensity first, then balances acidity, texture, tannin risk, and guest context.";
-}
-
 function rerankHits(question: string, hits: RetrievalHit[]) {
-  return [...hits].sort((left, right) => {
-    const leftScore = left.score + lexicalBoost(question, left);
-    const rightScore = right.score + lexicalBoost(question, right);
-    return rightScore - leftScore;
-  });
+  return hits
+    .map((hit) => ({
+      ...hit,
+      score: Math.min(1, Math.max(0, hit.score + lexicalBoost(question, hit))),
+    }))
+    .sort((left, right) => right.score - left.score);
 }
 
 function lexicalBoost(question: string, hit: RetrievalHit) {
@@ -275,6 +257,47 @@ function lexicalBoost(question: string, hit: RetrievalHit) {
   const matched = tokens.filter((token) => haystack.includes(token));
   const exactSectionBonus = matched.some((token) => hit.section.toLowerCase().includes(token)) ? 0.12 : 0;
   return Math.min(0.55, (matched.length / tokens.length) * 0.7 + exactSectionBonus);
+}
+
+function lexicalOverlap(question: string, hit: RetrievalHit) {
+  const tokens = tokenize(question);
+  if (!tokens.length) return 0;
+  const haystack = `${hit.documentName} ${hit.section} ${hit.content}`.toLowerCase();
+  return tokens.filter((token) => haystack.includes(token)).length / tokens.length;
+}
+
+function extractEvidenceTags(hits: RetrievalHit[]) {
+  const evidenceTerms = [
+    "acid",
+    "acidity",
+    "aroma",
+    "body",
+    "texture",
+    "tannin",
+    "sweetness",
+    "salt",
+    "saline",
+    "spice",
+    "richness",
+    "service",
+    "policy",
+    "allergy",
+    "timing",
+  ];
+  const corpus = hits.map((hit) => hit.content.toLowerCase()).join(" ");
+  return evidenceTerms.filter((term) => corpus.includes(term)).slice(0, 8);
+}
+
+function buildCompatibilityLogic(hits: RetrievalHit[]) {
+  const terms = extractEvidenceTags(hits).filter((term) =>
+    ["acid", "acidity", "aroma", "body", "texture", "tannin", "sweetness", "salt", "saline", "spice", "richness"].includes(term),
+  );
+
+  if (!terms.length) {
+    return "The retrieved chunks did not contain explicit flavor compatibility signals, so no extra compatibility claim was inferred.";
+  }
+
+  return `Compatibility reasoning is limited to retrieved source language mentioning ${terms.join(", ")}. No unstated pairings or sensory claims were added.`;
 }
 
 function tokenize(value: string) {

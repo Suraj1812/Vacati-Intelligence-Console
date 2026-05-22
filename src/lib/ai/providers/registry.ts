@@ -66,15 +66,14 @@ export function createProvider(provider: AiProvider, hits: RetrievalHit[] = []):
     });
   }
 
-  return new LocalProvider(hits);
+  if (provider === "local") {
+    return new LocalProvider(hits);
+  }
+
+  throw new Error(`AI provider "${provider}" is not configured.`);
 }
 
 export function getActiveProvider(hits: RetrievalHit[] = []) {
   const env = getEnv();
   return createProvider(env.aiProvider, hits);
-}
-
-export function getFallbackProvider(hits: RetrievalHit[] = []) {
-  const env = getEnv();
-  return createProvider(env.fallbackProvider, hits);
 }

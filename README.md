@@ -2,12 +2,12 @@
 
 Vacati Intelligence Console is a premium AI knowledge platform for hospitality teams: grounded chat, document ingestion, explainability, citations, provider-agnostic model orchestration, and production deployment support.
 
-It is intentionally not a Gemini-only project. Gemini and Vertex AI are supported adapters, but the platform also supports Ollama, OpenRouter, vLLM, LM Studio, OpenAI-compatible APIs, local embeddings, local extractive answers, and pgvector.
+It is intentionally not a Gemini-only project. Gemini and Vertex AI are supported adapters, but the platform also supports Ollama, OpenRouter, vLLM, LM Studio, OpenAI-compatible APIs, native local embeddings, self-managed extractive generation, and pgvector.
 
 ## Product Surface
 
 - AI knowledge chat with streamed answers
-- PDF, markdown, and text ingestion
+- PDF, DOCX, markdown, and text ingestion
 - RAG retrieval with hybrid semantic and lexical reranking
 - Citations and source attribution
 - Explainability under every answer
@@ -21,7 +21,7 @@ It is intentionally not a Gemini-only project. Gemini and Vertex AI are supporte
 - `src/app/api/chat` streams grounded answers as server-sent events
 - `src/app/api/knowledge` ingests files, chunks documents, embeds content, and updates the vector index
 - `src/lib/ai/providers` contains provider adapters for Gemini, Vertex, Ollama, OpenRouter, vLLM, LM Studio, and OpenAI-compatible APIs
-- `src/lib/ai/rag-pipeline.ts` orchestrates retrieval, generation, caching, observability, citations, and explainability
+- `src/lib/ai/rag-pipeline.ts` orchestrates dynamic retrieval, generation, caching, observability, citations, and explainability
 - `src/lib/ai/vector-store.ts` supports in-memory local mode and pgvector
 - `src/hooks` contains client-safe state and streaming hooks
 - `src/lib/config/env.ts` validates runtime configuration with Zod
@@ -38,7 +38,7 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-The default mode is local and private: no external AI key is required. Answers are produced only from documents you upload.
+The default mode is local and private: no external AI key is required. The runtime starts with an empty knowledge base and answers only from documents you upload and index.
 
 ## Local AI With Ollama
 

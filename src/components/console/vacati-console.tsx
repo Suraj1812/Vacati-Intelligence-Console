@@ -5,7 +5,6 @@ import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
-  ArrowRight,
   Loader2,
   Menu,
   Send,
@@ -19,7 +18,6 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { useChatStream } from "@/hooks/use-chat-stream";
 import { useKnowledge } from "@/hooks/use-knowledge";
-import { demoPrompts } from "@/lib/data/demo-documents";
 
 export function VacatiConsole() {
   const [input, setInput] = useState("");
@@ -55,7 +53,7 @@ export function VacatiConsole() {
         ref={fileInputRef}
         type="file"
         multiple
-        accept=".pdf,.txt,.md"
+        accept=".pdf,.docx,.txt,.md"
         className="hidden"
         onChange={(event) => void uploadFiles(event.target.files)}
       />
@@ -88,7 +86,6 @@ export function VacatiConsole() {
                 {!messages.length ? (
                   <Onboarding
                     hasDocuments={Boolean(knowledge?.documents.length)}
-                    onPrompt={submitMessage}
                     onUploadClick={openUploadDialog}
                   />
                 ) : (
@@ -181,11 +178,9 @@ function TopBar({
 
 function Onboarding({
   hasDocuments,
-  onPrompt,
   onUploadClick,
 }: {
   hasDocuments: boolean;
-  onPrompt: (prompt: string) => void;
   onUploadClick: () => void;
 }) {
   return (
@@ -199,27 +194,15 @@ function Onboarding({
         Ask questions from your own documents.
       </h1>
       <p className="mt-5 max-w-2xl text-base leading-7 text-zinc-400">
-        Upload PDFs, menus, guides, or manuals. Vacati answers from indexed content and shows the sources it used.
+        Upload PDF, DOCX, markdown, or text files. Vacati parses, chunks, embeds, indexes, retrieves, and answers only from your live knowledge base.
       </p>
 
       {hasDocuments ? (
-        <div className="mt-10 grid gap-3">
-          {demoPrompts.map((prompt, index) => (
-            <button
-              key={prompt}
-              type="button"
-              onClick={() => onPrompt(prompt)}
-              className="group flex items-center justify-between gap-4 rounded-lg border border-white/[0.08] bg-white/[0.035] px-4 py-4 text-left text-sm text-zinc-300 transition-all hover:border-white/[0.14] hover:bg-white/[0.06]"
-            >
-              <span className="flex items-center gap-3">
-                <span className="flex h-7 w-7 items-center justify-center rounded-md bg-black/30 font-mono text-xs text-zinc-500">
-                  0{index + 1}
-                </span>
-                {prompt}
-              </span>
-              <ArrowRight className="h-4 w-4 text-zinc-600 transition-transform group-hover:translate-x-1 group-hover:text-zinc-300" />
-            </button>
-          ))}
+        <div className="mt-10 max-w-xl rounded-lg border border-white/[0.08] bg-white/[0.035] px-4 py-4">
+          <p className="text-sm text-zinc-300">Knowledge is indexed.</p>
+          <p className="mt-1 text-sm leading-6 text-zinc-500">
+            Ask a precise question and the console will retrieve matching chunks before generating a grounded answer.
+          </p>
         </div>
       ) : (
         <Button
@@ -264,7 +247,7 @@ function Composer({
                 onSend();
               }
             }}
-            placeholder={hasDocuments ? "Ask about a menu, wine pairing, service recovery, or uploaded manual..." : "Upload documents to begin..."}
+            placeholder={hasDocuments ? "Ask a question grounded in your uploaded documents..." : "Upload documents to begin..."}
             className="min-h-[74px] resize-none border-0 bg-transparent px-3 py-3 text-[15px] leading-6 text-zinc-100 shadow-none outline-none placeholder:text-zinc-600 focus-visible:ring-0"
           />
           <div className="flex items-center justify-between gap-3 px-2 pb-1">

@@ -13,17 +13,18 @@ export class LocalProvider implements AiProviderAdapter {
     const pieces = answer.match(/.{1,28}(\s|$)/g) ?? [answer];
 
     for (const piece of pieces) {
-      await new Promise((resolve) => setTimeout(resolve, 8));
       yield { text: piece };
     }
   }
 
   async health(): Promise<ProviderHealth> {
+    const startedAt = performance.now();
+    const probe = composeExtractiveAnswer("health", []);
     return {
       provider: this.id,
       healthy: true,
-      latencyMs: 1,
-      message: "Local extractive provider ready",
+      latencyMs: Math.round(performance.now() - startedAt),
+      message: probe ? "Local extractive inference available" : "Local extractive inference unavailable",
     };
   }
 }
@@ -34,7 +35,7 @@ function extractQuestion(prompt: string) {
 
 function composeExtractiveAnswer(question: string, hits: RetrievalHit[]) {
   if (!hits.length) {
-    return "Upload a document first, then ask a question about it. I will answer only from indexed sources.";
+    return "I cannot answer because no indexed document context was retrieved for this question.";
   }
 
   const lead = hits[0];

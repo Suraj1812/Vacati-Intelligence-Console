@@ -7,10 +7,9 @@
 3. Set production secrets:
 
 ```bash
-AI_PROVIDER=openrouter
-AI_FALLBACK_PROVIDER=local
-OPENROUTER_API_KEY=...
-OPENROUTER_MODEL=meta-llama/llama-3.1-8b-instruct
+AI_PROVIDER=vllm
+LOCAL_LLM_BASE_URL=https://your-vllm-endpoint.example.com/v1
+LOCAL_LLM_MODEL=meta-llama/Llama-3.1-8B-Instruct
 VECTOR_STORE=pgvector
 DATABASE_URL=...
 EMBEDDING_PROVIDER=local

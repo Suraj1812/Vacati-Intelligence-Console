@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: vacati-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: vacati
+      POSTGRES_PASSWORD: vacati
+      POSTGRES_DB: vacati
+    ports:
+      - "5432:5432"
+    volumes:
+      - vacati-postgres:/var/lib/postgresql/data
+      - ./supabase/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vacati -d vacati"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: vacati-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - vacati-ollama:/root/.ollama
+
+volumes:
+  vacati-postgres:
+  vacati-ollama:

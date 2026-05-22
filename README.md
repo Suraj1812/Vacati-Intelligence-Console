@@ -1,36 +1,147 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Vacati Intelligence Console
 
-## Getting Started
+Vacati Intelligence Console is a premium AI knowledge platform for hospitality teams: grounded chat, document ingestion, explainability, citations, provider-agnostic model orchestration, and production deployment support.
 
-First, run the development server:
+It is intentionally not a Gemini-only project. Gemini and Vertex AI are supported adapters, but the platform also supports Ollama, OpenRouter, vLLM, LM Studio, OpenAI-compatible APIs, local embeddings, local extractive answers, and pgvector.
+
+## Product Surface
+
+- AI knowledge chat with streamed answers
+- PDF, markdown, and text ingestion
+- RAG retrieval with hybrid semantic and lexical reranking
+- Citations and source attribution
+- Explainability under every answer
+- Knowledge sidebar with active sources, indexed chunks, retrieval hits, and embedding status
+- AI system status page at `/status`
+- Health endpoint at `/api/health`
+- Premium dark UI built with Next.js 15, TypeScript, Tailwind CSS, shadcn/ui, and Framer Motion
+
+## Architecture
+
+- `src/app/api/chat` streams grounded answers as server-sent events
+- `src/app/api/knowledge` ingests files, chunks documents, embeds content, and updates the vector index
+- `src/lib/ai/providers` contains provider adapters for Gemini, Vertex, Ollama, OpenRouter, vLLM, LM Studio, and OpenAI-compatible APIs
+- `src/lib/ai/rag-pipeline.ts` orchestrates retrieval, generation, caching, observability, citations, and explainability
+- `src/lib/ai/vector-store.ts` supports in-memory local mode and pgvector
+- `src/hooks` contains client-safe state and streaming hooks
+- `src/lib/config/env.ts` validates runtime configuration with Zod
+
+See [Architecture](docs/ARCHITECTURE.md) and [Deployment](docs/DEPLOYMENT.md).
+
+## Local Setup
 
 ```bash
+npm install
+cp .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The default mode is local and private: no external AI key is required. Answers are produced only from documents you upload.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Local AI With Ollama
 
-## Learn More
+```bash
+npm run docker:up
+docker exec -it vacati-ollama ollama pull llama3.1:8b
+docker exec -it vacati-ollama ollama pull nomic-embed-text
+```
 
-To learn more about Next.js, take a look at the following resources:
+Set:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+AI_PROVIDER=ollama
+EMBEDDING_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1:8b
+OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## OpenAI-Compatible Local Inference
 
-## Deploy on Vercel
+For LM Studio:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+AI_PROVIDER=lmstudio
+LOCAL_LLM_BASE_URL=http://localhost:1234/v1
+LOCAL_LLM_MODEL=local-model
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+For vLLM:
+
+```bash
+AI_PROVIDER=vllm
+LOCAL_LLM_BASE_URL=http://localhost:8000/v1
+LOCAL_LLM_MODEL=meta-llama/Llama-3.1-8B-Instruct
+```
+
+For a generic OpenAI-compatible provider:
+
+```bash
+AI_PROVIDER=openai-compatible
+OPENAI_COMPATIBLE_BASE_URL=https://your-provider.example.com/v1
+OPENAI_COMPATIBLE_API_KEY=...
+OPENAI_COMPATIBLE_MODEL=...
+```
+
+## Cloud Providers
+
+Gemini:
+
+```bash
+AI_PROVIDER=gemini
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+Vertex AI:
+
+```bash
+AI_PROVIDER=vertex
+GOOGLE_CLOUD_PROJECT=...
+GOOGLE_CLOUD_LOCATION=us-central1
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+OpenRouter:
+
+```bash
+AI_PROVIDER=openrouter
+OPENROUTER_API_KEY=...
+OPENROUTER_MODEL=meta-llama/llama-3.1-8b-instruct
+```
+
+## pgvector / Supabase
+
+For production vector storage:
+
+```bash
+VECTOR_STORE=pgvector
+DATABASE_URL=postgresql://...
+EMBEDDING_DIMENSIONS=384
+```
+
+Run `supabase/migrations/001_pgvector_knowledge.sql` in Supabase SQL editor or through your migration workflow.
+
+## Validation
+
+```bash
+npm run lint
+npm run typecheck
+npm run build
+npm run check
+```
+
+## Deployment
+
+The repo includes:
+
+- `vercel.json`
+- GitHub Actions CI
+- GitHub Actions Vercel production workflow
+- `Dockerfile`
+- `docker-compose.yml`
+- Supabase pgvector migration
+
+Configure Vercel secrets and environment variables before enabling production deployment.

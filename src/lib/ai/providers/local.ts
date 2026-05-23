@@ -35,7 +35,7 @@ function extractQuestion(prompt: string) {
 
 function composeExtractiveAnswer(question: string, hits: RetrievalHit[]) {
   if (!hits.length) {
-    return "I cannot answer because no indexed document context was retrieved for this question.";
+    return "I can answer general questions once a generation provider is connected, such as Gemini, OpenRouter, Ollama, vLLM, LM Studio, or an OpenAI-compatible endpoint. Right now the local fallback only answers from indexed document context.";
   }
 
   const lead = hits[0];

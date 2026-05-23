@@ -6,7 +6,7 @@ It is intentionally not a Gemini-only project. Gemini and Vertex AI are supporte
 
 ## Product Surface
 
-- AI knowledge chat with streamed answers
+- AI chat with streamed general answers and source-backed answers when documents match
 - PDF, DOCX, markdown, and text ingestion
 - RAG retrieval with hybrid semantic and lexical reranking
 - Citations and source attribution
@@ -38,7 +38,7 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-The default mode is local and private: no external AI key is required. The runtime starts with an empty knowledge base and answers only from documents you upload and index.
+The default mode is local and private: no external AI key is required. For general answers before documents are uploaded, connect Gemini, OpenRouter, Ollama, vLLM, LM Studio, or an OpenAI-compatible endpoint.
 
 ## Local AI With Ollama
 
@@ -123,6 +123,20 @@ EMBEDDING_DIMENSIONS=384
 ```
 
 Run `supabase/migrations/001_pgvector_knowledge.sql` in Supabase SQL editor or through your migration workflow.
+
+## Railway pgvector
+
+For Railway, deploy the pgvector Postgres template, not the plain Postgres database, then add these variables to the app service:
+
+```bash
+VECTOR_STORE=pgvector
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+EMBEDDING_PROVIDER=local
+EMBEDDING_DIMENSIONS=384
+MAX_UPLOAD_MB=25
+```
+
+Run `railway/migrations/001_pgvector_knowledge.sql` against the pgvector database. The app also creates the same tables lazily on first upload, but running the migration gives you a clean database view immediately.
 
 ## Validation
 

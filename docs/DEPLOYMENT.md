@@ -19,6 +19,23 @@ EMBEDDING_DIMENSIONS=384
 4. Connect Supabase and run `supabase/migrations/001_pgvector_knowledge.sql`.
 5. Deploy through Vercel Git integration or the included GitHub Actions workflow.
 
+## Railway
+
+1. Create a Railway project from the GitHub repository.
+2. Add a pgvector Postgres database from the template marketplace. The standard Postgres image does not include pgvector.
+3. Add these variables to the Next.js service:
+
+```bash
+VECTOR_STORE=pgvector
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+EMBEDDING_PROVIDER=local
+EMBEDDING_DIMENSIONS=384
+MAX_UPLOAD_MB=25
+```
+
+4. Run `railway/migrations/001_pgvector_knowledge.sql` against the database, or let the app create the schema on first upload.
+5. Deploy the service after the database variables are attached.
+
 ## GitHub Actions
 
 The CI workflow runs:

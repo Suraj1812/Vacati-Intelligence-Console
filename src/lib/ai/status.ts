@@ -7,7 +7,7 @@ export async function getSystemStatus(): Promise<SystemStatus> {
   const env = getEnv();
   const pipeline = await getRagPipeline();
   const metrics = pipeline.getMetrics();
-  const knowledge = pipeline.getKnowledgeState();
+  const knowledge = await pipeline.getKnowledgeState();
   const activeProvider = safeCreateProvider(env);
   const providerHealth = [await activeProvider.health()];
 

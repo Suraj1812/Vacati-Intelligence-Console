@@ -23,17 +23,17 @@ export function KnowledgeSidebar({
   const hitCount = knowledge?.retrievalHits.length ?? 0;
 
   return (
-    <aside className="flex h-full flex-col gap-7 px-5 py-6">
+    <aside className="flex h-full flex-col gap-6 px-4 py-5">
       <div className="space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-medium text-zinc-100">Knowledge</p>
-            <p className="mt-1 text-xs text-zinc-500">{documents.length} active sources</p>
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-zinc-500">Sources</p>
+            <p className="mt-2 text-sm text-zinc-200">{documents.length} indexed</p>
           </div>
           <Button
             size="icon"
             variant="secondary"
-            className="h-8 w-8 rounded-md border border-white/10 bg-white/[0.06] text-zinc-200 hover:bg-white/[0.1]"
+            className="h-8 w-8 rounded-md border border-white/10 bg-[#1a1b18] text-zinc-200 hover:bg-[#22231f]"
             onClick={onUploadClick}
             disabled={isUploading}
             aria-label="Upload knowledge"
@@ -45,7 +45,7 @@ export function KnowledgeSidebar({
         <div className="space-y-3">
           <StatusRow
             icon={CheckCircle2}
-            label="Embeddings"
+            label="Index"
             value={knowledge?.embeddingStatus === "ready" ? "Ready" : "Indexing"}
           />
           <StatusRow icon={Database} label="Indexed chunks" value={`${knowledge?.totalChunks ?? 0}`} />
@@ -57,16 +57,14 @@ export function KnowledgeSidebar({
 
       <div className="min-h-0 flex-1 space-y-4 overflow-hidden">
         <div className="flex items-center justify-between">
-          <p className="text-xs font-medium uppercase text-zinc-500">Documents</p>
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-zinc-500">Documents</p>
         </div>
 
         <div className="space-y-3 overflow-y-auto pr-1">
           {!documents.length ? (
-            <div className="rounded-md border border-dashed border-white/[0.12] p-4">
-              <p className="text-sm text-zinc-300">No documents yet.</p>
-              <p className="mt-1 text-xs leading-5 text-zinc-500">
-                Upload a PDF, DOCX, markdown file, or text document to start asking questions.
-              </p>
+            <div className="rounded-md border border-dashed border-white/[0.14] bg-black/10 p-4">
+              <p className="text-sm text-zinc-300">No documents indexed</p>
+              <p className="mt-1 text-xs leading-5 text-zinc-500">PDF, DOCX, markdown, text, CSV, and JSON are accepted.</p>
             </div>
           ) : null}
           {documents.map((document, index) => (
@@ -75,7 +73,7 @@ export function KnowledgeSidebar({
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.04 }}
-              className="group rounded-md border border-white/[0.07] bg-white/[0.035] p-3 transition-colors hover:bg-white/[0.055]"
+              className="group rounded-md border border-white/[0.07] bg-[#131411] p-3 transition-colors hover:bg-[#181916]"
             >
               <div className="flex items-start gap-3">
                 <div className="mt-0.5 rounded-md border border-white/10 bg-black/30 p-2 text-zinc-300">
@@ -97,7 +95,7 @@ export function KnowledgeSidebar({
       </div>
 
       {hitCount ? (
-        <div className="rounded-md border border-white/[0.08] bg-white/[0.025] p-3">
+        <div className="rounded-md border border-white/[0.08] bg-[#11120f] p-3">
           <p className="text-xs font-medium text-zinc-300">Last retrieval</p>
           <div className="mt-2 space-y-2">
             {(knowledge?.retrievalHits ?? []).slice(0, 3).map((hit) => (

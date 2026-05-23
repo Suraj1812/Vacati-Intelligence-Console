@@ -23,6 +23,13 @@ export const vectorProviderSchema = z.enum(["memory", "pgvector"]);
 const emptyToUndefined = (value: unknown) => (value === "" ? undefined : value);
 const optionalString = z.preprocess(emptyToUndefined, z.string().optional());
 const optionalUrl = z.preprocess(emptyToUndefined, z.string().url().optional());
+const envBoolean = z.preprocess((value) => {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}, z.boolean());
 
 export type AiProvider = z.infer<typeof aiProviderSchema>;
 export type EmbeddingProvider = z.infer<typeof embeddingProviderSchema>;
@@ -50,8 +57,9 @@ const envSchema = z.object({
   EMBEDDING_DIMENSIONS: z.coerce.number().int().min(64).max(4096).default(384),
   VECTOR_STORE: vectorProviderSchema.default("memory"),
   DATABASE_URL: optionalString,
+  DATABASE_SSL: envBoolean.default(false),
   RAG_TOP_K: z.coerce.number().int().min(2).max(12).default(4),
-  MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(50).default(12),
+  MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(100).default(25),
   RESPONSE_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).max(86400).default(900),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
@@ -78,6 +86,7 @@ export type AppEnv = {
   embeddingDimensions: number;
   vectorStore: VectorProvider;
   databaseUrl?: string;
+  databaseSsl: boolean;
   ragTopK: number;
   maxUploadMb: number;
   responseCacheTtlSeconds: number;
@@ -139,6 +148,7 @@ export function getEnv(): AppEnv {
     embeddingDimensions: cachedEnv.EMBEDDING_DIMENSIONS,
     vectorStore: cachedEnv.VECTOR_STORE,
     databaseUrl: cachedEnv.DATABASE_URL,
+    databaseSsl: cachedEnv.DATABASE_SSL,
     ragTopK: cachedEnv.RAG_TOP_K,
     maxUploadMb: cachedEnv.MAX_UPLOAD_MB,
     responseCacheTtlSeconds: cachedEnv.RESPONSE_CACHE_TTL_SECONDS,

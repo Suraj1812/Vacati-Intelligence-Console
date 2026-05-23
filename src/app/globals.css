@@ -130,7 +130,12 @@
   }
 }
 
+* {
+  scrollbar-color: rgba(161, 161, 170, 0.35) transparent;
+  scrollbar-width: thin;
+}
+
 ::selection {
-  background: rgba(167, 243, 208, 0.24);
+  background: rgba(125, 211, 252, 0.24);
   color: white;
 }

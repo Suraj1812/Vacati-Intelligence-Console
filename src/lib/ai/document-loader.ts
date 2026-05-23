@@ -3,7 +3,7 @@ import { inflateRawSync } from "node:zlib";
 
 export async function fileToDocument(file: File): Promise<IngestibleDocument> {
   const buffer = Buffer.from(await file.arrayBuffer());
-  const extension = file.name.split(".").pop()?.toLowerCase();
+  const extension = inferExtension(buffer, file.name, file.type);
   const content = await extractText(buffer, extension, file.type);
   const type = inferDocumentType(extension, file.type);
 
@@ -32,18 +32,24 @@ async function extractText(buffer: Buffer, extension?: string, mimeType?: string
     return extractDocxText(buffer);
   }
 
-  return buffer.toString("utf8").trim();
+  return cleanText(buffer.toString("utf8"));
 }
 
 async function extractPdfText(buffer: Buffer) {
+  if (!buffer.subarray(0, 5).equals(Buffer.from("%PDF-"))) {
+    throw new Error("PDF text extraction failed. The uploaded file is not a valid PDF.");
+  }
+
   try {
     const { PDFParse } = await import("pdf-parse");
     const parser = new PDFParse({ data: buffer });
     const parsed = await parser.getText();
     await parser.destroy();
-    return parsed.text.trim();
+    return cleanText(parsed.text);
   } catch {
-    throw new Error("PDF text extraction failed. Please upload a selectable-text PDF or a plain text export.");
+    throw new Error(
+      "PDF text extraction failed. Please upload a selectable-text PDF; scanned image PDFs need OCR before upload.",
+    );
   }
 }
 
@@ -107,15 +113,16 @@ function findEndOfCentralDirectory(buffer: Buffer) {
 }
 
 function xmlToText(xml: string) {
-  return decodeXmlEntities(
-    xml
-      .replace(/<w:tab\/>/g, "\t")
-      .replace(/<\/w:p>/g, "\n")
-      .replace(/<[^>]+>/g, "")
-      .replace(/[ \t]+\n/g, "\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .replace(/[ \t]{2,}/g, " ")
-      .trim(),
+  return cleanText(
+    decodeXmlEntities(
+      xml
+        .replace(/<w:tab\/>/g, "\t")
+        .replace(/<\/w:p>/g, "\n")
+        .replace(/<[^>]+>/g, "")
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .replace(/[ \t]{2,}/g, " "),
+    ),
   );
 }
 
@@ -138,6 +145,36 @@ function inferDocumentType(extension?: string, mimeType?: string): IngestibleDoc
   }
   if (extension === "md" || extension === "markdown") return "markdown";
   return "text";
+}
+
+function inferExtension(buffer: Buffer, fileName: string, mimeType?: string) {
+  const lastDot = fileName.lastIndexOf(".");
+  const extension = lastDot >= 0 ? fileName.slice(lastDot + 1).toLowerCase() : undefined;
+  if (extension) {
+    return extension;
+  }
+
+  if (mimeType === "application/pdf" || buffer.subarray(0, 5).equals(Buffer.from("%PDF-"))) {
+    return "pdf";
+  }
+
+  if (
+    mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    buffer.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))
+  ) {
+    return "docx";
+  }
+
+  return undefined;
+}
+
+function cleanText(value: string) {
+  return value
+    .replace(/\u0000/g, "")
+    .replace(/\n--\s*\d+\s+of\s+\d+\s*--\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function summarizeText(content: string) {

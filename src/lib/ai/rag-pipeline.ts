@@ -1,6 +1,6 @@
 import { chunkDocument, estimateTokens } from "@/lib/ai/chunking";
 import { EmbeddingService } from "@/lib/ai/embeddings";
-import { buildGroundedPrompt } from "@/lib/ai/prompts";
+import { buildGeneralPrompt, buildGroundedPrompt } from "@/lib/ai/prompts";
 import { getActiveProvider } from "@/lib/ai/providers/registry";
 import type {
   Explainability,
@@ -33,7 +33,6 @@ type CachedAnswer = {
 };
 
 export class RagPipeline {
-  private documents = new Map<string, KnowledgeDocument>();
   private vectorStore: VectorStore = getVectorStore();
   private embeddings = new EmbeddingService();
   private lastRetrievalHits: RetrievalHit[] = [];
@@ -86,8 +85,7 @@ export class RagPipeline {
         },
       }));
 
-      this.documents.set(id, knowledgeDocument);
-      await this.vectorStore.addChunks(knowledgeChunks);
+      await this.vectorStore.addDocument(knowledgeDocument, knowledgeChunks);
       this.metrics.embeddingTokens += knowledgeDocument.tokenEstimate;
       indexedDocuments.push(knowledgeDocument);
     }
@@ -99,16 +97,16 @@ export class RagPipeline {
   }
 
   async retrieve(question: string, limit = getEnv().ragTopK) {
-    if (!this.documents.size) {
+    if (!(await this.vectorStore.hasContent())) {
       this.lastRetrievalHits = [];
       return [];
     }
 
     const startedAt = performance.now();
     const [embedding] = await this.embeddings.embedTexts([question]);
-    const candidates = await this.vectorStore.similaritySearch(embedding, Math.max(limit * 3, limit));
+    const candidates = await this.vectorStore.similaritySearch(embedding, Math.max(limit * 6, 16));
     const hits = rerankHits(question, candidates)
-      .filter((hit) => hit.score > 0.08 || lexicalOverlap(question, hit) > 0)
+      .filter((hit) => hit.score > 0.1 || lexicalOverlap(question, hit) > 0)
       .slice(0, limit);
     this.lastRetrievalHits = hits;
     this.metrics.retrievalMs = Math.round(performance.now() - startedAt);
@@ -117,18 +115,38 @@ export class RagPipeline {
   }
 
   async *answer(question: string) {
-    if (!this.documents.size) {
-      throw new Error("No indexed knowledge is available. Upload documents before asking questions.");
-    }
-
-    const hits = await this.retrieve(question);
+    const hasIndexedKnowledge = await this.vectorStore.hasContent();
+    const hits = hasIndexedKnowledge ? await this.retrieve(question) : [];
     if (!hits.length) {
-      const refusal =
-        "I cannot answer from the current index because no relevant document context was retrieved for this question.";
-      const explainability = this.explain(question, hits);
-      this.metrics.completionTokens += estimateTokens(refusal);
+      const startedAt = performance.now();
+      const prompt = buildGeneralPrompt(question);
+      const provider = getActiveProvider([]);
+      this.metrics.activeProvider = provider.id;
+      let completion = "";
 
-      yield { type: "token" as const, value: refusal };
+      try {
+        for await (const chunk of provider.stream({ prompt, temperature: 0.2, maxOutputTokens: 900 })) {
+          completion += chunk.text;
+          yield { type: "token" as const, value: chunk.text };
+        }
+      } catch (error) {
+        this.metrics.providerErrors += 1;
+        logger.error("Configured AI provider failed", {
+          provider: provider.id,
+          error: error instanceof Error ? error.message : "unknown",
+        });
+        throw new Error("The configured AI provider failed before an answer could be generated.");
+      }
+
+      if (!completion.trim()) {
+        throw new Error("The configured AI provider returned an empty response.");
+      }
+
+      const explainability = this.explainGeneral(hasIndexedKnowledge);
+      this.metrics.promptTokens += estimateTokens(question);
+      this.metrics.completionTokens += estimateTokens(completion);
+      this.metrics.generationMs = Math.round(performance.now() - startedAt);
+
       yield { type: "sources" as const, value: [] };
       yield { type: "explainability" as const, value: explainability };
       return;
@@ -183,11 +201,11 @@ export class RagPipeline {
     yield { type: "explainability" as const, value: explainability };
   }
 
-  getKnowledgeState(): KnowledgeState {
-    const documents = Array.from(this.documents.values());
+  async getKnowledgeState(): Promise<KnowledgeState> {
+    const documents = await this.vectorStore.listDocuments();
     return {
       documents,
-      totalChunks: this.vectorStore.count(),
+      totalChunks: await this.vectorStore.countChunks(),
       embeddingStatus: "ready",
       retrievalHits: this.lastRetrievalHits,
       activeSources: documents.map((document) => document.name),
@@ -211,6 +229,7 @@ export class RagPipeline {
         flavorLogic: "No compatibility logic was generated because no source chunks were retrieved.",
         retrievedContext: [],
         tags: ["needs-source"],
+        mode: "grounded",
       };
     }
 
@@ -227,6 +246,21 @@ export class RagPipeline {
       flavorLogic: buildCompatibilityLogic(hits),
       retrievedContext: hits.slice(0, 3).map((hit) => `${hit.documentName}: ${hit.section}`),
       tags,
+      mode: "grounded",
+    };
+  }
+
+  private explainGeneral(hasIndexedKnowledge: boolean): Explainability {
+    return {
+      why: hasIndexedKnowledge
+        ? "No close document match was retrieved, so this response used the configured general model instead of uploaded sources."
+        : "No uploaded knowledge is indexed yet, so this response used the configured general model.",
+      confidence: 0.58,
+      flavorLogic:
+        "This answer is not grounded in uploaded source chunks. Treat time-sensitive or business-critical claims as needing live verification.",
+      retrievedContext: [],
+      tags: ["general-answer", hasIndexedKnowledge ? "no-source-match" : "no-uploaded-sources"],
+      mode: "general",
     };
   }
 }
@@ -242,12 +276,12 @@ function rerankHits(question: string, hits: RetrievalHit[]) {
   return hits
     .map((hit) => ({
       ...hit,
-      score: Math.min(1, Math.max(0, hit.score + lexicalBoost(question, hit))),
+      score: Math.min(1, Math.max(0, hit.score * 0.62 + lexicalScore(question, hit) * 0.38)),
     }))
     .sort((left, right) => right.score - left.score);
 }
 
-function lexicalBoost(question: string, hit: RetrievalHit) {
+function lexicalScore(question: string, hit: RetrievalHit) {
   const tokens = tokenize(question);
   if (!tokens.length) {
     return 0;
@@ -255,8 +289,16 @@ function lexicalBoost(question: string, hit: RetrievalHit) {
 
   const haystack = `${hit.documentName} ${hit.section} ${hit.content}`.toLowerCase();
   const matched = tokens.filter((token) => haystack.includes(token));
-  const exactSectionBonus = matched.some((token) => hit.section.toLowerCase().includes(token)) ? 0.12 : 0;
-  return Math.min(0.55, (matched.length / tokens.length) * 0.7 + exactSectionBonus);
+  const titleMatches = tokens.filter((token) => `${hit.documentName} ${hit.section}`.toLowerCase().includes(token));
+  const phrase = question
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const phraseBonus = phrase.length > 8 && haystack.includes(phrase) ? 0.18 : 0;
+  const titleBonus = Math.min(0.2, (titleMatches.length / tokens.length) * 0.25);
+
+  return Math.min(1, matched.length / tokens.length + titleBonus + phraseBonus);
 }
 
 function lexicalOverlap(question: string, hit: RetrievalHit) {

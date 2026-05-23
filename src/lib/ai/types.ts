@@ -44,6 +44,7 @@ export type Explainability = {
   flavorLogic: string;
   retrievedContext: string[];
   tags: string[];
+  mode: "grounded" | "general";
 };
 
 export type ChatMessage = {

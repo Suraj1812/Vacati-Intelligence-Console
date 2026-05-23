@@ -1,18 +1,22 @@
-import type { KnowledgeChunk, RetrievalHit } from "@/lib/ai/types";
+import type { KnowledgeChunk, KnowledgeDocument, RetrievalHit } from "@/lib/ai/types";
 import { getEnv } from "@/lib/config/env";
 import { logger } from "@/lib/observability/logger";
 
 export interface VectorStore {
-  addChunks(chunks: KnowledgeChunk[]): Promise<void>;
+  addDocument(document: KnowledgeDocument, chunks: KnowledgeChunk[]): Promise<void>;
   similaritySearch(embedding: number[], limit: number): Promise<RetrievalHit[]>;
-  count(): number;
+  listDocuments(): Promise<KnowledgeDocument[]>;
+  countChunks(): Promise<number>;
+  hasContent(): Promise<boolean>;
   provider(): "pgvector" | "In-memory";
 }
 
 export class InMemoryVectorStore implements VectorStore {
+  private documents = new Map<string, KnowledgeDocument>();
   private chunks = new Map<string, KnowledgeChunk>();
 
-  async addChunks(chunks: KnowledgeChunk[]) {
+  async addDocument(document: KnowledgeDocument, chunks: KnowledgeChunk[]) {
+    this.documents.set(document.id, document);
     chunks.forEach((chunk) => this.chunks.set(chunk.id, chunk));
   }
 
@@ -36,8 +40,18 @@ export class InMemoryVectorStore implements VectorStore {
       }));
   }
 
-  count() {
+  async listDocuments() {
+    return Array.from(this.documents.values()).sort((left, right) =>
+      right.uploadedAt.localeCompare(left.uploadedAt),
+    );
+  }
+
+  async countChunks() {
     return this.chunks.size;
+  }
+
+  async hasContent() {
+    return this.chunks.size > 0;
   }
 
   provider(): "pgvector" | "In-memory" {
@@ -48,42 +62,88 @@ export class InMemoryVectorStore implements VectorStore {
 export class PgVectorStore implements VectorStore {
   private poolPromise: Promise<import("pg").Pool> | null = null;
   private initialized = false;
-  private storedCount = 0;
 
-  async addChunks(chunks: KnowledgeChunk[]) {
+  async addDocument(document: KnowledgeDocument, chunks: KnowledgeChunk[]) {
     const pool = await this.getPool();
     await this.ensureSchema();
+    const client = await pool.connect();
 
-    for (const chunk of chunks) {
-      await pool.query(
-        `insert into knowledge_chunks (
+    try {
+      await client.query("begin");
+      await client.query(
+        `insert into knowledge_documents (
           id,
-          document_id,
-          document_name,
-          chunk_index,
-          content,
+          name,
+          type,
+          status,
+          uploaded_at,
+          chunk_count,
           token_estimate,
-          embedding,
-          metadata
-        ) values ($1, $2, $3, $4, $5, $6, $7::vector, $8)
+          summary,
+          tags
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
         on conflict (id) do update set
-          content = excluded.content,
-          embedding = excluded.embedding,
-          metadata = excluded.metadata`,
+          name = excluded.name,
+          type = excluded.type,
+          status = excluded.status,
+          uploaded_at = excluded.uploaded_at,
+          chunk_count = excluded.chunk_count,
+          token_estimate = excluded.token_estimate,
+          summary = excluded.summary,
+          tags = excluded.tags`,
         [
-          chunk.id,
-          chunk.documentId,
-          chunk.documentName,
-          chunk.index,
-          chunk.content,
-          chunk.tokenEstimate,
-          vectorLiteral(chunk.embedding),
-          JSON.stringify(chunk.metadata),
+          document.id,
+          document.name,
+          document.type,
+          document.status,
+          document.uploadedAt,
+          document.chunkCount,
+          document.tokenEstimate,
+          document.summary,
+          JSON.stringify(document.tags),
         ],
       );
-    }
 
-    this.storedCount += chunks.length;
+      for (const chunk of chunks) {
+        await client.query(
+          `insert into knowledge_chunks (
+            id,
+            document_id,
+            document_name,
+            chunk_index,
+            content,
+            token_estimate,
+            embedding,
+            metadata
+          ) values ($1, $2, $3, $4, $5, $6, $7::vector, $8::jsonb)
+          on conflict (id) do update set
+            document_id = excluded.document_id,
+            document_name = excluded.document_name,
+            chunk_index = excluded.chunk_index,
+            content = excluded.content,
+            token_estimate = excluded.token_estimate,
+            embedding = excluded.embedding,
+            metadata = excluded.metadata`,
+          [
+            chunk.id,
+            chunk.documentId,
+            chunk.documentName,
+            chunk.index,
+            chunk.content,
+            chunk.tokenEstimate,
+            vectorLiteral(chunk.embedding),
+            JSON.stringify(chunk.metadata),
+          ],
+        );
+      }
+
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw formatDatabaseError(error);
+    } finally {
+      client.release();
+    }
   }
 
   async similaritySearch(embedding: number[], limit: number) {
@@ -96,7 +156,7 @@ export class PgVectorStore implements VectorStore {
       document_name: string;
       content: string;
       distance: number;
-      metadata: KnowledgeChunk["metadata"];
+      metadata: unknown;
     }>(
       `select
         id,
@@ -111,20 +171,77 @@ export class PgVectorStore implements VectorStore {
       [vectorLiteral(embedding), limit],
     );
 
+    return result.rows.map((row) => {
+      const metadata = normalizeMetadata(row.metadata);
+      return {
+        chunkId: row.id,
+        documentId: row.document_id,
+        documentName: row.document_name,
+        content: row.content,
+        score: Math.max(0, 1 - Number(row.distance)),
+        section: metadata.section,
+        page: metadata.page,
+        tags: metadata.tags,
+      };
+    });
+  }
+
+  async listDocuments() {
+    const pool = await this.getPool();
+    await this.ensureSchema();
+    const result = await pool.query<{
+      id: string;
+      name: string;
+      type: KnowledgeDocument["type"];
+      status: KnowledgeDocument["status"];
+      uploaded_at: Date | string;
+      chunk_count: number;
+      token_estimate: number;
+      summary: string;
+      tags: unknown;
+    }>(`
+      select
+        id,
+        name,
+        type,
+        status,
+        uploaded_at,
+        chunk_count,
+        token_estimate,
+        summary,
+        tags
+      from knowledge_documents
+      order by uploaded_at desc
+    `);
+
     return result.rows.map((row) => ({
-      chunkId: row.id,
-      documentId: row.document_id,
-      documentName: row.document_name,
-      content: row.content,
-      score: Math.max(0, 1 - Number(row.distance)),
-      section: row.metadata.section,
-      page: row.metadata.page,
-      tags: row.metadata.tags,
+      id: row.id,
+      name: row.name,
+      type: row.type,
+      status: row.status,
+      uploadedAt:
+        row.uploaded_at instanceof Date ? row.uploaded_at.toISOString() : new Date(row.uploaded_at).toISOString(),
+      chunkCount: Number(row.chunk_count),
+      tokenEstimate: Number(row.token_estimate),
+      summary: row.summary,
+      tags: normalizeTags(row.tags),
     }));
   }
 
-  count() {
-    return this.storedCount;
+  async countChunks() {
+    const pool = await this.getPool();
+    await this.ensureSchema();
+    const result = await pool.query<{ count: number }>("select count(*)::int as count from knowledge_chunks");
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async hasContent() {
+    const pool = await this.getPool();
+    await this.ensureSchema();
+    const result = await pool.query<{ has_content: boolean }>(
+      "select exists(select 1 from knowledge_chunks limit 1) as has_content",
+    );
+    return Boolean(result.rows[0]?.has_content);
   }
 
   provider() {
@@ -138,10 +255,12 @@ export class PgVectorStore implements VectorStore {
         throw new Error("DATABASE_URL is required for pgvector.");
       }
 
+      const useSsl = env.databaseSsl || env.databaseUrl.includes("sslmode=require");
       return new Pool({
         connectionString: env.databaseUrl,
         max: 4,
         idleTimeoutMillis: 20_000,
+        ssl: useSsl ? { rejectUnauthorized: false } : undefined,
       });
     });
 
@@ -157,7 +276,26 @@ export class PgVectorStore implements VectorStore {
     const pool = await this.getPool();
     const dimensions = env.embeddingDimensions;
 
-    await pool.query("create extension if not exists vector");
+    try {
+      await pool.query("create extension if not exists vector");
+    } catch (error) {
+      throw formatDatabaseError(error);
+    }
+
+    await pool.query(`
+      create table if not exists knowledge_documents (
+        id text primary key,
+        name text not null,
+        type text not null,
+        status text not null,
+        uploaded_at timestamptz not null,
+        chunk_count integer not null,
+        token_estimate integer not null,
+        summary text not null,
+        tags jsonb not null,
+        created_at timestamptz not null default now()
+      )
+    `);
     await pool.query(`
       create table if not exists knowledge_chunks (
         id text primary key,
@@ -170,6 +308,10 @@ export class PgVectorStore implements VectorStore {
         metadata jsonb not null,
         created_at timestamptz not null default now()
       )
+    `);
+    await pool.query(`
+      create index if not exists knowledge_chunks_document_idx
+      on knowledge_chunks (document_id)
     `);
     await pool.query(`
       create index if not exists knowledge_chunks_embedding_idx
@@ -220,5 +362,33 @@ export function cosineSimilarity(left: number[], right: number[]) {
 }
 
 function vectorLiteral(vector: number[]) {
-  return `[${vector.map((value) => Number(value.toFixed(8))).join(",")}]`;
+  return `[${vector.map((value) => (Number.isFinite(value) ? Number(value.toFixed(8)) : 0)).join(",")}]`;
+}
+
+function normalizeMetadata(value: unknown): KnowledgeChunk["metadata"] {
+  if (!value || typeof value !== "object") {
+    return { section: "Document excerpt", tags: ["uploaded"] };
+  }
+
+  const metadata = value as Partial<KnowledgeChunk["metadata"]>;
+  return {
+    section: typeof metadata.section === "string" ? metadata.section : "Document excerpt",
+    page: typeof metadata.page === "number" ? metadata.page : undefined,
+    tags: normalizeTags(metadata.tags),
+  };
+}
+
+function normalizeTags(value: unknown) {
+  return Array.isArray(value) && value.every((tag) => typeof tag === "string") ? value : ["uploaded"];
+}
+
+function formatDatabaseError(error: unknown) {
+  const message = error instanceof Error ? error.message : "Unknown database error.";
+  if (message.includes('extension "vector" is not available') || message.includes("could not open extension control file")) {
+    return new Error(
+      "pgvector is not available in this Postgres database. On Railway, use the pgvector Postgres template, then set DATABASE_URL and VECTOR_STORE=pgvector.",
+    );
+  }
+
+  return error instanceof Error ? error : new Error(message);
 }

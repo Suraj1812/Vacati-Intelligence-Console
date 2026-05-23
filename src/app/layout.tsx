@@ -4,10 +4,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
 const appName = "Vacati Intelligence Console";
-const appDescription = "Ask questions from your uploaded hospitality documents with grounded sources.";
+const appDescription =
+  "A production intelligence console for general answers, document-grounded retrieval, citations, and operational knowledge workflows.";
 
 export async function generateMetadata(): Promise<Metadata> {
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  const baseUrl = getSiteUrl();
 
   return {
     metadataBase: new URL(baseUrl),
@@ -17,30 +18,69 @@ export async function generateMetadata(): Promise<Metadata> {
     },
     description: appDescription,
     applicationName: appName,
+    keywords: [
+      "Vacati",
+      "intelligence console",
+      "RAG",
+      "document chat",
+      "pgvector",
+      "hospitality AI",
+      "knowledge base",
+    ],
+    authors: [{ name: "Vacati" }],
+    creator: "Vacati",
+    publisher: "Vacati",
+    category: "productivity",
+    manifest: "/manifest.webmanifest",
+    alternates: {
+      canonical: "/",
+    },
+    robots: {
+      index: true,
+      follow: true,
+      googleBot: {
+        index: true,
+        follow: true,
+        "max-image-preview": "large",
+        "max-snippet": -1,
+        "max-video-preview": -1,
+      },
+    },
+    formatDetection: {
+      telephone: false,
+      date: false,
+      address: false,
+      email: false,
+    },
     icons: {
-      icon: "/logo.jpeg",
-      apple: "/logo.jpeg",
+      icon: [
+        { url: "/favicon.ico" },
+        { url: "/icon", type: "image/png", sizes: "64x64" },
+      ],
+      apple: [{ url: "/apple-icon", type: "image/png", sizes: "180x180" }],
+      shortcut: ["/favicon.ico"],
     },
     openGraph: {
       title: appName,
       description: appDescription,
       url: baseUrl,
       siteName: appName,
+      locale: "en_US",
       images: [
         {
-          url: "/logo.jpeg",
-          width: 200,
-          height: 200,
-          alt: "Vacati",
+          url: "/opengraph-image",
+          width: 1200,
+          height: 630,
+          alt: "Vacati Intelligence Console",
         },
       ],
       type: "website",
     },
     twitter: {
-      card: "summary",
+      card: "summary_large_image",
       title: appName,
       description: appDescription,
-      images: ["/logo.jpeg"],
+      images: ["/opengraph-image"],
     },
   };
 }
@@ -67,4 +107,15 @@ export default function RootLayout({
       </body>
     </html>
   );
+}
+
+function getSiteUrl() {
+  const value = process.env.NEXT_PUBLIC_SITE_URL ?? process.env.VERCEL_PROJECT_PRODUCTION_URL ?? "http://localhost:3000";
+  const withProtocol = /^https?:\/\//.test(value) ? value : `https://${value}`;
+
+  try {
+    return new URL(withProtocol).origin;
+  } catch {
+    return "http://localhost:3000";
+  }
 }

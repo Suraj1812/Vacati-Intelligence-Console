@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { BookOpen, Gauge, Link2 } from "lucide-react";
+import { BookOpen, Gauge, Link2, Sparkles } from "lucide-react";
 import { motion } from "framer-motion";
 
 import type { ChatMessage as ChatMessageType } from "@/lib/ai/types";
@@ -26,7 +26,7 @@ export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
         className={
           isAssistant
             ? "space-y-5"
-            : "rounded-lg border border-white/[0.08] bg-white/[0.06] px-4 py-3 text-zinc-100 shadow-2xl shadow-black/20"
+            : "rounded-md border border-white/[0.08] bg-[#171816] px-4 py-3 text-zinc-100 shadow-lg shadow-black/10"
         }
       >
         {isAssistant ? (
@@ -61,7 +61,7 @@ function LoadingLine() {
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-40" />
         <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-300" />
       </span>
-      Composing grounded answer
+      Working
     </div>
   );
 }
@@ -78,13 +78,29 @@ function Explainability({
     return null;
   }
 
+  if (explainability.mode === "general") {
+    return (
+      <motion.div
+        initial={{ opacity: 0, height: 0 }}
+        animate={{ opacity: 1, height: "auto" }}
+        className="ml-12 flex flex-wrap items-center gap-2 border-l border-white/[0.1] pl-4 text-xs text-zinc-500"
+      >
+        <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-300/15 bg-sky-300/10 px-2 py-1 text-sky-100">
+          <Sparkles className="h-3.5 w-3.5" />
+          General answer
+        </span>
+        <span>{explainability.flavorLogic}</span>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, height: 0 }}
       animate={{ opacity: 1, height: "auto" }}
       className="ml-12 border-l border-white/[0.12] pl-4"
     >
-      <p className="text-xs font-medium text-zinc-500">Answer details</p>
+      <p className="text-xs font-medium text-zinc-500">Source details</p>
 
       <div className="mt-4 grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
         <div className="space-y-4">

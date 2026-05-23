@@ -5,6 +5,12 @@ import { toast } from "sonner";
 
 import type { KnowledgeState } from "@/lib/ai/types";
 
+type UploadResponse = {
+  chunksIndexed: number;
+  failed?: Array<{ name: string; error: string }>;
+  knowledge: KnowledgeState;
+};
+
 export function useKnowledge() {
   const [knowledge, setKnowledge] = useState<KnowledgeState | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -32,14 +38,21 @@ export function useKnowledge() {
           method: "POST",
           body: form,
         });
-        const result = await response.json();
+        const result = (await response.json()) as Partial<UploadResponse> & { error?: string };
 
         if (!response.ok) {
           throw new Error(result.error ?? "Upload failed.");
         }
 
-        setKnowledge(result.knowledge);
-        toast.success(`${result.chunksIndexed} chunks indexed`);
+        if (result.knowledge) {
+          setKnowledge(result.knowledge);
+        }
+
+        if (result.failed?.length) {
+          toast.warning(`${result.chunksIndexed ?? 0} chunks indexed; ${result.failed.length} file failed`);
+        } else {
+          toast.success(`${result.chunksIndexed ?? 0} chunks indexed`);
+        }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Upload failed.");
       } finally {

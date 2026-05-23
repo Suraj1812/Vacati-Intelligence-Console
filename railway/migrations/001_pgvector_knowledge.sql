@@ -31,3 +31,8 @@ create index if not exists knowledge_chunks_document_idx
 create index if not exists knowledge_chunks_embedding_idx
   on knowledge_chunks using ivfflat (embedding vector_cosine_ops)
   with (lists = 100);
+
+create index if not exists knowledge_chunks_fts_idx
+  on knowledge_chunks using gin (
+    to_tsvector('english', document_name || ' ' || coalesce(metadata->>'section', '') || ' ' || content)
+  );

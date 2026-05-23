@@ -1,24 +1,41 @@
 import { fileToDocument } from "@/lib/ai/document-loader";
 import { getRagPipeline } from "@/lib/ai/rag-pipeline";
-import { ApiError, errorResponse } from "@/lib/api/errors";
+import { ApiError } from "@/lib/api/errors";
+import { withApiRoute } from "@/lib/api/route";
 import { getEnv } from "@/lib/config/env";
+import { logger } from "@/lib/observability/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const pipeline = await getRagPipeline();
-  return Response.json(await pipeline.getKnowledgeState());
+export async function GET(request: Request) {
+  return withApiRoute(request, { name: "knowledge.get" }, async () => {
+    const pipeline = await getRagPipeline();
+    return Response.json(await pipeline.getKnowledgeState());
+  });
 }
 
 export async function POST(request: Request) {
-  try {
+  return withApiRoute(
+    request,
+    {
+      name: "knowledge.post",
+      rateLimit: {
+        scope: "upload",
+        limit: getEnv().rateLimitUploadRequests,
+      },
+    },
+    async () => {
     const env = getEnv();
     const formData = await request.formData();
     const files = [...formData.getAll("files"), ...formData.getAll("file")].filter(isUploadedFile);
 
     if (!files.length) {
       throw new ApiError("No files uploaded.", 400);
+    }
+
+    if (files.length > env.maxFilesPerUpload) {
+      throw new ApiError(`Upload up to ${env.maxFilesPerUpload} files at a time.`, 413);
     }
 
     const maxBytes = env.maxUploadMb * 1024 * 1024;
@@ -50,15 +67,20 @@ export async function POST(request: Request) {
 
     const pipeline = await getRagPipeline();
     const ingestion = await pipeline.ingestDocuments(documents);
+    logger.info("knowledge_ingested", {
+      files: files.length,
+      failed: failed.length,
+      chunksIndexed: ingestion.chunksIndexed,
+      documents: ingestion.documents.map((document) => document.name),
+    });
 
     return Response.json({
       ...ingestion,
       failed,
       knowledge: await pipeline.getKnowledgeState(),
     });
-  } catch (error) {
-    return errorResponse(error);
-  }
+    },
+  );
 }
 
 function isUploadedFile(value: FormDataEntryValue): value is File {

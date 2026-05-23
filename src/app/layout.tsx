@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { WebVitals } from "@/components/analytics/web-vitals";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
@@ -102,6 +103,7 @@ export default function RootLayout({
       <body className="flex min-h-full flex-col">
         <TooltipProvider>
           {children}
+          <WebVitals />
           <Toaster theme="dark" position="top-right" richColors />
         </TooltipProvider>
       </body>

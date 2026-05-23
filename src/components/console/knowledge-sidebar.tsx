@@ -64,7 +64,9 @@ export function KnowledgeSidebar({
           {!documents.length ? (
             <div className="rounded-md border border-dashed border-white/[0.14] bg-black/10 p-4">
               <p className="text-sm text-zinc-300">No documents indexed</p>
-              <p className="mt-1 text-xs leading-5 text-zinc-500">PDF, DOCX, markdown, text, CSV, and JSON are accepted.</p>
+              <p className="mt-1 text-xs leading-5 text-zinc-500">
+                PDF, DOCX, CSV, XLSX, images, markdown, text, and JSON are accepted.
+              </p>
             </div>
           ) : null}
           {documents.map((document, index) => (

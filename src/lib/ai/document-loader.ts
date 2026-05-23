@@ -1,4 +1,5 @@
 import type { IngestibleDocument } from "@/lib/ai/document-types";
+import { getEnv } from "@/lib/config/env";
 import { inflateRawSync } from "node:zlib";
 
 export async function fileToDocument(file: File): Promise<IngestibleDocument> {
@@ -32,6 +33,25 @@ async function extractText(buffer: Buffer, extension?: string, mimeType?: string
     return extractDocxText(buffer);
   }
 
+  if (extension === "csv" || mimeType === "text/csv") {
+    return extractDelimitedText(buffer.toString("utf8"), ",");
+  }
+
+  if (extension === "tsv" || mimeType === "text/tab-separated-values") {
+    return extractDelimitedText(buffer.toString("utf8"), "\t");
+  }
+
+  if (
+    extension === "xlsx" ||
+    mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  ) {
+    return extractXlsxText(buffer);
+  }
+
+  if (isImage(extension, mimeType)) {
+    return extractImageText(buffer, mimeType);
+  }
+
   return cleanText(buffer.toString("utf8"));
 }
 
@@ -44,11 +64,20 @@ async function extractPdfText(buffer: Buffer) {
     const { PDFParse } = await import("pdf-parse");
     const parser = new PDFParse({ data: buffer });
     const parsed = await parser.getText();
+    const text = cleanText(parsed.text);
+    if (text.length >= 40 || !getEnv().ocrEnabled) {
+      await parser.destroy();
+      return text;
+    }
+
+    const ocrText = await extractPdfOcrText(parser);
     await parser.destroy();
-    return cleanText(parsed.text);
-  } catch {
+    return cleanText([text, ocrText].filter(Boolean).join("\n\n"));
+  } catch (error) {
     throw new Error(
-      "PDF text extraction failed. Please upload a selectable-text PDF; scanned image PDFs need OCR before upload.",
+      error instanceof Error && error.message.includes("OCR")
+        ? error.message
+        : "PDF text extraction failed. Please upload a selectable-text PDF or a scanned PDF with readable OCR pages.",
     );
   }
 }
@@ -126,6 +155,142 @@ function xmlToText(xml: string) {
   );
 }
 
+function extractDelimitedText(value: string, delimiter: "," | "\t") {
+  const rows = parseDelimitedRows(value, delimiter).filter((row) => row.some(Boolean));
+  if (!rows.length) {
+    return "";
+  }
+
+  const [headers, ...records] = rows;
+  return records
+    .slice(0, 5_000)
+    .map((row, rowIndex) => {
+      const cells = row
+        .map((cell, index) => {
+          const label = headers[index] || `Column ${index + 1}`;
+          return cell ? `${label}: ${cell}` : "";
+        })
+        .filter(Boolean)
+        .join("; ");
+      return `Row ${rowIndex + 1}: ${cells}`;
+    })
+    .join("\n");
+}
+
+function parseDelimitedRows(value: string, delimiter: "," | "\t") {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    const next = value[index + 1];
+
+    if (char === '"' && quoted && next === '"') {
+      cell += '"';
+      index += 1;
+      continue;
+    }
+
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+
+    if (!quoted && char === delimiter) {
+      row.push(cell.trim());
+      cell = "";
+      continue;
+    }
+
+    if (!quoted && (char === "\n" || char === "\r")) {
+      if (char === "\r" && next === "\n") index += 1;
+      row.push(cell.trim());
+      rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+
+    cell += char;
+  }
+
+  row.push(cell.trim());
+  rows.push(row);
+  return rows;
+}
+
+function extractXlsxText(buffer: Buffer) {
+  const sharedStringsXml = readZipEntry(buffer, "xl/sharedStrings.xml")?.toString("utf8") ?? "";
+  const sharedStrings = Array.from(sharedStringsXml.matchAll(/<si[^>]*>([\s\S]*?)<\/si>/g)).map((match) =>
+    xmlToText(match[1]),
+  );
+  const workbookXml = readZipEntry(buffer, "xl/workbook.xml")?.toString("utf8") ?? "";
+  const sheetNames = Array.from(workbookXml.matchAll(/<sheet[^>]*name="([^"]+)"/g)).map((match) =>
+    decodeXmlEntities(match[1]),
+  );
+  const sheetEntries = listZipEntries(buffer).filter((entry) => /^xl\/worksheets\/sheet\d+\.xml$/.test(entry));
+
+  return sheetEntries
+    .slice(0, 12)
+    .map((entry, sheetIndex) => {
+      const xml = readZipEntry(buffer, entry)?.toString("utf8") ?? "";
+      const rows = Array.from(xml.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g))
+        .slice(0, 1_000)
+        .map((rowMatch) => {
+          const cells = Array.from(rowMatch[1].matchAll(/<c[^>]*(?:t="([^"]+)")?[^>]*>([\s\S]*?)<\/c>/g))
+            .map((cellMatch) => {
+              const type = cellMatch[1];
+              const value = cellMatch[2].match(/<v[^>]*>([\s\S]*?)<\/v>/)?.[1] ?? "";
+              const inline = cellMatch[2].match(/<t[^>]*>([\s\S]*?)<\/t>/)?.[1] ?? "";
+              if (type === "s") return sharedStrings[Number(value)] ?? "";
+              return decodeXmlEntities(inline || value);
+            })
+            .filter(Boolean);
+          return cells.join(" | ");
+        })
+        .filter(Boolean);
+      return `Sheet: ${sheetNames[sheetIndex] ?? `Sheet ${sheetIndex + 1}`}\n${rows.join("\n")}`;
+    })
+    .filter((sheet) => sheet.trim().length > 20)
+    .join("\n\n");
+}
+
+async function extractPdfOcrText(parser: { getScreenshot: (params?: never) => Promise<unknown> }) {
+  const env = getEnv();
+  const screenshots = (await parser.getScreenshot({
+    pages: Array.from({ length: env.ocrMaxPages }, (_, index) => index + 1),
+    imageBuffer: true,
+    scale: 1.4,
+  } as never)) as { pages?: Array<{ data?: Uint8Array; image?: { data?: Uint8Array } }> };
+  const buffers = (screenshots.pages ?? [])
+    .map((page) => page.data ?? page.image?.data)
+    .filter((data): data is Uint8Array => Boolean(data));
+  const text = await Promise.all(buffers.map((data) => extractImageText(Buffer.from(data), "image/png")));
+  const joined = text.filter(Boolean).join("\n\n");
+  if (!joined.trim()) {
+    throw new Error("PDF OCR failed. The scanned pages did not contain readable text.");
+  }
+  return joined;
+}
+
+async function extractImageText(buffer: Buffer, mimeType?: string) {
+  if (!getEnv().ocrEnabled) {
+    throw new Error("Image OCR is disabled for this deployment.");
+  }
+
+  try {
+    const { recognize } = await import("tesseract.js");
+    const result = await recognize(buffer, "eng", {
+      logger: () => undefined,
+    });
+    return cleanText(result.data.text);
+  } catch {
+    throw new Error(`OCR extraction failed for ${mimeType ?? "image"}. Please upload a clearer image or a text export.`);
+  }
+}
+
 function decodeXmlEntities(value: string) {
   return value
     .replace(/&lt;/g, "<")
@@ -143,6 +308,14 @@ function inferDocumentType(extension?: string, mimeType?: string): IngestibleDoc
   ) {
     return "docx";
   }
+  if (extension === "csv" || extension === "tsv" || mimeType === "text/csv") return "csv";
+  if (
+    extension === "xlsx" ||
+    mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  ) {
+    return "xlsx";
+  }
+  if (isImage(extension, mimeType)) return "image";
   if (extension === "md" || extension === "markdown") return "markdown";
   return "text";
 }
@@ -166,6 +339,35 @@ function inferExtension(buffer: Buffer, fileName: string, mimeType?: string) {
   }
 
   return undefined;
+}
+
+function isImage(extension?: string, mimeType?: string) {
+  return (
+    Boolean(mimeType?.startsWith("image/")) ||
+    extension === "png" ||
+    extension === "jpg" ||
+    extension === "jpeg" ||
+    extension === "webp"
+  );
+}
+
+function listZipEntries(buffer: Buffer) {
+  const eocdOffset = findEndOfCentralDirectory(buffer);
+  if (eocdOffset < 0) return [];
+  const entryCount = buffer.readUInt16LE(eocdOffset + 10);
+  let offset = buffer.readUInt32LE(eocdOffset + 16);
+  const entries: string[] = [];
+
+  for (let index = 0; index < entryCount; index += 1) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) break;
+    const fileNameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    entries.push(buffer.toString("utf8", offset + 46, offset + 46 + fileNameLength));
+    offset += 46 + fileNameLength + extraLength + commentLength;
+  }
+
+  return entries;
 }
 
 function cleanText(value: string) {

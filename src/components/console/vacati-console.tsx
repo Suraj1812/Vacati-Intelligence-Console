@@ -2,20 +2,35 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
+  Command,
   FileText,
   Loader2,
   Menu,
+  Pin,
+  Plus,
+  Search,
+  Settings,
   Send,
   Sparkles,
+  Square,
   UploadCloud,
 } from "lucide-react";
 
 import { ChatMessage } from "@/components/console/chat-message";
 import { KnowledgeSidebar } from "@/components/console/knowledge-sidebar";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { useChatStream } from "@/hooks/use-chat-stream";
@@ -23,6 +38,8 @@ import { useKnowledge } from "@/hooks/use-knowledge";
 
 export function VacatiConsole() {
   const [input, setInput] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
+  const [isCommandOpen, setIsCommandOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const {
     knowledge,
@@ -32,13 +49,38 @@ export function VacatiConsole() {
     uploadFiles,
     openUploadDialog,
   } = useKnowledge();
-  const { messages, isStreaming, activeAssistantId, sendMessage } = useChatStream(refreshKnowledge);
+  const {
+    sessions,
+    activeSessionId,
+    setActiveSessionId,
+    messages,
+    isStreaming,
+    activeAssistantId,
+    sendMessage,
+    stopGeneration,
+    regenerateLast,
+    newSession,
+    renameSession,
+    togglePinned,
+  } = useChatStream(refreshKnowledge);
 
   useEffect(() => {
     if (messages.length > 0) {
       scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
     }
   }, [messages]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setIsCommandOpen((current) => !current);
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   function submitMessage(nextPrompt?: string) {
     const content = (nextPrompt ?? input).trim();
@@ -48,29 +90,54 @@ export function VacatiConsole() {
   }
 
   return (
-    <main className="h-screen overflow-hidden bg-[#0b0c0a] text-zinc-100">
+    <main
+      className="h-screen overflow-hidden bg-[#0b0c0a] text-zinc-100"
+      onDragOver={(event) => {
+        event.preventDefault();
+        setIsDragging(true);
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget === event.target) setIsDragging(false);
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setIsDragging(false);
+        void uploadFiles(event.dataTransfer.files);
+      }}
+    >
       <input
         ref={fileInputRef}
         type="file"
         multiple
-        accept=".pdf,.docx,.txt,.md,.markdown,.csv,.json"
+        accept=".pdf,.docx,.txt,.md,.markdown,.csv,.tsv,.xlsx,.json,.png,.jpg,.jpeg,.webp"
         className="hidden"
         onChange={(event) => void uploadFiles(event.target.files)}
       />
 
       <div className="mx-auto flex h-full w-full max-w-[1480px] border-x border-white/[0.06] bg-[#0d0e0c]">
-        <div className="hidden w-[304px] shrink-0 border-r border-white/[0.08] bg-[#0a0b09] lg:block">
-          <KnowledgeSidebar
-            knowledge={knowledge}
-            isUploading={isUploading}
-            onUploadClick={openUploadDialog}
+        <div className="hidden w-[320px] shrink-0 border-r border-white/[0.08] bg-[#0a0b09] lg:flex lg:flex-col">
+          <ConversationList
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            onSelect={setActiveSessionId}
+            onNew={newSession}
+            onRename={renameSession}
+            onTogglePinned={togglePinned}
           />
+          <div className="min-h-0 flex-1 border-t border-white/[0.08]">
+            <KnowledgeSidebar
+              knowledge={knowledge}
+              isUploading={isUploading}
+              onUploadClick={openUploadDialog}
+            />
+          </div>
         </div>
 
         <section className="flex min-w-0 flex-1 flex-col">
           <TopBar
             isUploading={isUploading}
             onUploadClick={openUploadDialog}
+            onCommandClick={() => setIsCommandOpen(true)}
             sidebar={
               <KnowledgeSidebar
                 knowledge={knowledge}
@@ -95,6 +162,7 @@ export function VacatiConsole() {
                       key={message.id}
                       message={message}
                       isStreaming={isStreaming && message.id === activeAssistantId}
+                      onRegenerate={message.id === activeAssistantId ? regenerateLast : undefined}
                     />
                   ))
                 )}
@@ -110,10 +178,20 @@ export function VacatiConsole() {
               onInput={setInput}
               onSend={() => submitMessage()}
               onUploadClick={openUploadDialog}
+              onStop={stopGeneration}
             />
           </div>
         </section>
       </div>
+      {isDragging ? <DropOverlay /> : null}
+      <CommandPalette
+        open={isCommandOpen}
+        sessions={sessions}
+        onClose={() => setIsCommandOpen(false)}
+        onNew={newSession}
+        onUpload={openUploadDialog}
+        onSelect={setActiveSessionId}
+      />
     </main>
   );
 }
@@ -121,10 +199,12 @@ export function VacatiConsole() {
 function TopBar({
   isUploading,
   onUploadClick,
+  onCommandClick,
   sidebar,
 }: {
   isUploading: boolean;
   onUploadClick: () => void;
+  onCommandClick: () => void;
   sidebar: React.ReactNode;
 }) {
   return (
@@ -156,6 +236,16 @@ function TopBar({
         </div>
 
         <nav className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="hidden rounded-md border border-white/[0.08] bg-white/[0.03] text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 md:inline-flex"
+            onClick={onCommandClick}
+          >
+            <Command className="h-3.5 w-3.5" />
+            Search
+          </Button>
           <span className="hidden items-center gap-2 rounded-md border border-emerald-200/15 bg-emerald-200/10 px-2.5 py-1.5 text-xs text-emerald-50 md:inline-flex">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
             Live
@@ -166,6 +256,23 @@ function TopBar({
           >
             System status
           </Link>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" size="icon" variant="ghost" className="h-8 w-8 rounded-md text-zinc-400 hover:bg-white/[0.06]">
+                <Settings className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52 border-white/[0.08] bg-[#12130f] text-zinc-100">
+              <DropdownMenuLabel>Workspace</DropdownMenuLabel>
+              <DropdownMenuSeparator className="bg-white/[0.08]" />
+              <DropdownMenuItem asChild>
+                <Link href="/settings">Settings</Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link href="/status">System status</Link>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             size="sm"
             className="rounded-md bg-zinc-100 text-zinc-950 hover:bg-white"
@@ -249,6 +356,7 @@ function Composer({
   onInput,
   onSend,
   onUploadClick,
+  onStop,
 }: {
   input: string;
   hasDocuments: boolean;
@@ -257,6 +365,7 @@ function Composer({
   onInput: (value: string) => void;
   onSend: () => void;
   onUploadClick: () => void;
+  onStop: () => void;
 }) {
   return (
     <div className="border-t border-white/[0.08] bg-[#0d0e0c]/95 px-4 py-4 backdrop-blur-xl sm:px-8 lg:px-12">
@@ -295,15 +404,161 @@ function Composer({
                 type="button"
                 size="icon"
                 className="h-9 w-9 rounded-md bg-zinc-100 text-zinc-950 hover:bg-white"
-                onClick={onSend}
-                disabled={!input.trim() || isStreaming}
-                aria-label="Send message"
+                onClick={isStreaming ? onStop : onSend}
+                disabled={!input.trim() && !isStreaming}
+                aria-label={isStreaming ? "Stop generation" : "Send message"}
               >
-                {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                {isStreaming ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
               </Button>
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ConversationList({
+  sessions,
+  activeSessionId,
+  onSelect,
+  onNew,
+  onRename,
+  onTogglePinned,
+}: {
+  sessions: ReturnType<typeof useChatStream>["sessions"];
+  activeSessionId: string;
+  onSelect: (id: string) => void;
+  onNew: () => void;
+  onRename: (id: string, title: string) => void;
+  onTogglePinned: (id: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const filtered = sessions.filter((session) => session.title.toLowerCase().includes(query.toLowerCase()));
+
+  return (
+    <section className="flex max-h-[42%] min-h-[260px] flex-col px-4 py-5">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-xs font-medium uppercase tracking-[0.18em] text-zinc-500">Chats</p>
+        <Button type="button" size="icon" variant="ghost" className="h-8 w-8 rounded-md text-zinc-400 hover:bg-white/[0.06]" onClick={onNew}>
+          <Plus className="h-4 w-4" />
+        </Button>
+      </div>
+      <div className="relative mb-3">
+        <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-zinc-600" />
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search chats"
+          className="h-8 rounded-md border-white/[0.08] bg-[#11120f] pl-8 text-sm text-zinc-200 placeholder:text-zinc-600"
+        />
+      </div>
+      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+        {filtered.map((session) => (
+          <div
+            key={session.id}
+            className={`group flex items-center gap-2 rounded-md px-2 py-2 text-sm ${
+              session.id === activeSessionId ? "bg-white/[0.08] text-zinc-100" : "text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200"
+            }`}
+          >
+            <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={() => onSelect(session.id)}>
+              {session.title}
+            </button>
+            <button
+              type="button"
+              className={`opacity-0 transition-opacity group-hover:opacity-100 ${session.pinned ? "text-emerald-200 opacity-100" : ""}`}
+              onClick={() => onTogglePinned(session.id)}
+              aria-label="Pin chat"
+            >
+              <Pin className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              className="text-xs opacity-0 transition-opacity group-hover:opacity-100"
+              onClick={() => {
+                const title = window.prompt("Rename chat", session.title);
+                if (title) onRename(session.id, title);
+              }}
+            >
+              Rename
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CommandPalette({
+  open,
+  sessions,
+  onClose,
+  onNew,
+  onUpload,
+  onSelect,
+}: {
+  open: boolean;
+  sessions: ReturnType<typeof useChatStream>["sessions"];
+  onClose: () => void;
+  onNew: () => void;
+  onUpload: () => void;
+  onSelect: (id: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const filtered = useMemo(
+    () => sessions.filter((session) => session.title.toLowerCase().includes(query.toLowerCase())).slice(0, 6),
+    [query, sessions],
+  );
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose, open]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/55 px-4 pt-[15vh] backdrop-blur-sm" onMouseDown={onClose}>
+      <div className="mx-auto max-w-xl overflow-hidden rounded-lg border border-white/[0.12] bg-[#11120f] shadow-2xl shadow-black/50" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="flex items-center gap-3 border-b border-white/[0.08] px-4 py-3">
+          <Command className="h-4 w-4 text-zinc-500" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            autoFocus
+            placeholder="Search chats or run a command"
+            className="h-8 flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
+          />
+        </div>
+        <div className="p-2">
+          <PaletteAction label="New conversation" onClick={() => { onNew(); onClose(); }} />
+          <PaletteAction label="Upload sources" onClick={() => { onUpload(); onClose(); }} />
+          {filtered.map((session) => (
+            <PaletteAction key={session.id} label={session.title} onClick={() => { onSelect(session.id); onClose(); }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PaletteAction({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" className="block w-full rounded-md px-3 py-2 text-left text-sm text-zinc-300 hover:bg-white/[0.06] hover:text-zinc-50" onClick={onClick}>
+      {label}
+    </button>
+  );
+}
+
+function DropOverlay() {
+  return (
+    <div className="pointer-events-none fixed inset-4 z-50 flex items-center justify-center rounded-xl border border-dashed border-sky-200/40 bg-sky-950/20 text-sky-50 backdrop-blur-sm">
+      <div className="rounded-md border border-white/[0.12] bg-[#11120f] px-5 py-4 text-sm shadow-2xl">
+        Drop files to index them
       </div>
     </div>
   );

@@ -59,7 +59,15 @@ const envSchema = z.object({
   DATABASE_URL: optionalString,
   DATABASE_SSL: envBoolean.default(false),
   RAG_TOP_K: z.coerce.number().int().min(2).max(12).default(4),
+  RAG_CANDIDATE_MULTIPLIER: z.coerce.number().int().min(3).max(12).default(8),
   MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(100).default(25),
+  MAX_FILES_PER_UPLOAD: z.coerce.number().int().min(1).max(20).default(8),
+  RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().min(10).max(3600).default(60),
+  RATE_LIMIT_CHAT_REQUESTS: z.coerce.number().int().min(1).max(300).default(40),
+  RATE_LIMIT_UPLOAD_REQUESTS: z.coerce.number().int().min(1).max(100).default(12),
+  OBSERVABILITY_WEBHOOK_URL: optionalUrl,
+  OCR_ENABLED: envBoolean.default(true),
+  OCR_MAX_PAGES: z.coerce.number().int().min(1).max(10).default(3),
   RESPONSE_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).max(86400).default(900),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
@@ -88,7 +96,15 @@ export type AppEnv = {
   databaseUrl?: string;
   databaseSsl: boolean;
   ragTopK: number;
+  ragCandidateMultiplier: number;
   maxUploadMb: number;
+  maxFilesPerUpload: number;
+  rateLimitWindowSeconds: number;
+  rateLimitChatRequests: number;
+  rateLimitUploadRequests: number;
+  observabilityWebhookUrl?: string;
+  ocrEnabled: boolean;
+  ocrMaxPages: number;
   responseCacheTtlSeconds: number;
   logLevel: "debug" | "info" | "warn" | "error";
 };
@@ -150,7 +166,15 @@ export function getEnv(): AppEnv {
     databaseUrl: cachedEnv.DATABASE_URL,
     databaseSsl: cachedEnv.DATABASE_SSL,
     ragTopK: cachedEnv.RAG_TOP_K,
+    ragCandidateMultiplier: cachedEnv.RAG_CANDIDATE_MULTIPLIER,
     maxUploadMb: cachedEnv.MAX_UPLOAD_MB,
+    maxFilesPerUpload: cachedEnv.MAX_FILES_PER_UPLOAD,
+    rateLimitWindowSeconds: cachedEnv.RATE_LIMIT_WINDOW_SECONDS,
+    rateLimitChatRequests: cachedEnv.RATE_LIMIT_CHAT_REQUESTS,
+    rateLimitUploadRequests: cachedEnv.RATE_LIMIT_UPLOAD_REQUESTS,
+    observabilityWebhookUrl: cachedEnv.OBSERVABILITY_WEBHOOK_URL,
+    ocrEnabled: cachedEnv.OCR_ENABLED,
+    ocrMaxPages: cachedEnv.OCR_MAX_PAGES,
     responseCacheTtlSeconds: cachedEnv.RESPONSE_CACHE_TTL_SECONDS,
     logLevel: cachedEnv.LOG_LEVEL,
   };

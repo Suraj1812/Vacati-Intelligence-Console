@@ -3,7 +3,7 @@ export type KnowledgeDocumentStatus = "queued" | "chunked" | "embedded" | "index
 export type KnowledgeDocument = {
   id: string;
   name: string;
-  type: "pdf" | "docx" | "markdown" | "text";
+  type: "pdf" | "docx" | "markdown" | "text" | "csv" | "xlsx" | "image";
   status: KnowledgeDocumentStatus;
   uploadedAt: string;
   chunkCount: number;
@@ -33,6 +33,8 @@ export type RetrievalHit = {
   documentName: string;
   content: string;
   score: number;
+  confidence: "high" | "medium" | "low";
+  matchType: "hybrid" | "vector" | "keyword";
   section: string;
   page?: number;
   tags: string[];
@@ -54,6 +56,15 @@ export type ChatMessage = {
   createdAt: string;
   sources?: RetrievalHit[];
   explainability?: Explainability;
+};
+
+export type ChatSession = {
+  id: string;
+  title: string;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+  messages: ChatMessage[];
 };
 
 export type KnowledgeState = {

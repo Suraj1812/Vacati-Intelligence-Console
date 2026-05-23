@@ -32,6 +32,11 @@ type CachedAnswer = {
   explainability: Explainability;
 };
 
+type PromptTurn = {
+  role: "user" | "assistant";
+  content: string;
+};
+
 export class RagPipeline {
   private vectorStore: VectorStore = getVectorStore();
   private embeddings = new EmbeddingService();
@@ -103,23 +108,38 @@ export class RagPipeline {
     }
 
     const startedAt = performance.now();
-    const [embedding] = await this.embeddings.embedTexts([question]);
-    const candidates = await this.vectorStore.similaritySearch(embedding, Math.max(limit * 6, 16));
-    const hits = rerankHits(question, candidates)
-      .filter((hit) => hit.score > 0.1 || lexicalOverlap(question, hit) > 0)
-      .slice(0, limit);
-    this.lastRetrievalHits = hits;
-    this.metrics.retrievalMs = Math.round(performance.now() - startedAt);
-    this.metrics.promptTokens += estimateTokens(question);
-    return hits;
+    try {
+      const [embedding] = await this.embeddings.embedTexts([question]);
+      const candidateLimit = Math.max(limit * getEnv().ragCandidateMultiplier, 24);
+      const candidates = await this.vectorStore.hybridSearch(question, embedding, candidateLimit);
+      const hits = rerankHits(question, candidates)
+        .filter((hit) => hit.score > 0.16 || lexicalOverlap(question, hit) > 0.18)
+        .filter(dedupeHits())
+        .slice(0, limit);
+      this.lastRetrievalHits = hits;
+      this.metrics.retrievalMs = Math.round(performance.now() - startedAt);
+      this.metrics.promptTokens += estimateTokens(question);
+      logger.info("retrieval_completed", {
+        candidates: candidates.length,
+        hits: hits.length,
+        retrievalMs: this.metrics.retrievalMs,
+        topScore: hits[0]?.score ?? 0,
+      });
+      return hits;
+    } catch (error) {
+      logger.error("vector_search_failed", {
+        error: error instanceof Error ? error.message : "unknown",
+      });
+      throw error;
+    }
   }
 
-  async *answer(question: string) {
+  async *answer(question: string, history: PromptTurn[] = []) {
     const hasIndexedKnowledge = await this.vectorStore.hasContent();
     const hits = hasIndexedKnowledge ? await this.retrieve(question) : [];
     if (!hits.length) {
       const startedAt = performance.now();
-      const prompt = buildGeneralPrompt(question);
+      const prompt = buildGeneralPrompt(question, history);
       const provider = getActiveProvider([]);
       this.metrics.activeProvider = provider.id;
       let completion = "";
@@ -152,7 +172,8 @@ export class RagPipeline {
       return;
     }
 
-    const cacheKey = createCacheKey(question, hits);
+    const compressedHits = compressHits(question, hits);
+    const cacheKey = createCacheKey(question, compressedHits, history);
     const cached = this.answerCache.get(cacheKey);
 
     if (cached) {
@@ -166,8 +187,8 @@ export class RagPipeline {
 
     const startedAt = performance.now();
     let completion = "";
-    const prompt = buildGroundedPrompt(question, hits);
-    const provider = getActiveProvider(hits);
+    const prompt = buildGroundedPrompt(question, compressedHits, history);
+    const provider = getActiveProvider(compressedHits);
     this.metrics.activeProvider = provider.id;
 
     try {
@@ -190,14 +211,14 @@ export class RagPipeline {
 
     this.metrics.completionTokens += estimateTokens(completion);
     this.metrics.generationMs = Math.round(performance.now() - startedAt);
-    const explainability = this.explain(question, hits);
+    const explainability = this.explain(question, compressedHits);
     this.answerCache.set(cacheKey, {
       answer: completion,
-      hits,
+      hits: compressedHits,
       explainability,
     });
 
-    yield { type: "sources" as const, value: hits };
+    yield { type: "sources" as const, value: compressedHits };
     yield { type: "explainability" as const, value: explainability };
   }
 
@@ -279,6 +300,54 @@ function rerankHits(question: string, hits: RetrievalHit[]) {
       score: Math.min(1, Math.max(0, hit.score * 0.62 + lexicalScore(question, hit) * 0.38)),
     }))
     .sort((left, right) => right.score - left.score);
+}
+
+function dedupeHits() {
+  const seen = new Set<string>();
+  return (hit: RetrievalHit) => {
+    const key = normalizeForDedupe(hit.content).slice(0, 220);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  };
+}
+
+function compressHits(question: string, hits: RetrievalHit[]) {
+  const tokens = tokenize(question);
+  return hits.map((hit) => ({
+    ...hit,
+    content: compressContent(hit.content, tokens),
+  }));
+}
+
+function compressContent(content: string, tokens: string[]) {
+  const sentences = content
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+
+  if (sentences.length <= 3) {
+    return content.length > 1_400 ? `${content.slice(0, 1_397)}...` : content;
+  }
+
+  const ranked = sentences
+    .map((sentence, index) => ({
+      sentence,
+      index,
+      score: tokens.filter((token) => sentence.toLowerCase().includes(token)).length,
+    }))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, 5)
+    .sort((left, right) => left.index - right.index)
+    .map((item) => item.sentence)
+    .join(" ");
+
+  return ranked.length > 1_400 ? `${ranked.slice(0, 1_397)}...` : ranked;
+}
+
+function normalizeForDedupe(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function lexicalScore(question: string, hit: RetrievalHit) {
@@ -367,10 +436,11 @@ function tokenize(value: string) {
     .filter((token) => token.length > 2 && !stopWords.has(token));
 }
 
-function createCacheKey(question: string, hits: RetrievalHit[]) {
+function createCacheKey(question: string, hits: RetrievalHit[], history: PromptTurn[] = []) {
   return JSON.stringify({
     question: question.trim().toLowerCase(),
     chunks: hits.map((hit) => hit.chunkId),
+    history: history.slice(-4).map((turn) => `${turn.role}:${turn.content.slice(0, 240)}`),
   });
 }
 

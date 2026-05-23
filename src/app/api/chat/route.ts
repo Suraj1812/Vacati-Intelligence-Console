@@ -1,11 +1,27 @@
 import { getRagPipeline } from "@/lib/ai/rag-pipeline";
 import { ApiError, errorResponse } from "@/lib/api/errors";
+import { withApiRoute } from "@/lib/api/route";
+import { getEnv } from "@/lib/config/env";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  let body: { message?: string };
+  return withApiRoute(
+    request,
+    {
+      name: "chat.post",
+      rateLimit: {
+        scope: "chat",
+        limit: getEnv().rateLimitChatRequests,
+      },
+    },
+    () => handlePost(request),
+  );
+}
+
+async function handlePost(request: Request) {
+  let body: { message?: string; history?: Array<{ role?: string; content?: string }> };
   try {
     body = (await request.json()) as { message?: string };
   } catch (error) {
@@ -21,12 +37,13 @@ export async function POST(request: Request) {
     return errorResponse(new ApiError("Message is too long for this console session.", 413));
   }
 
+  const history = normalizeHistory(body.history);
   const pipeline = await getRagPipeline();
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        for await (const event of pipeline.answer(message)) {
+        for await (const event of pipeline.answer(message, history)) {
           controller.enqueue(encoder.encode(toServerEvent(event.type, event.value)));
         }
 
@@ -52,6 +69,19 @@ export async function POST(request: Request) {
       Connection: "keep-alive",
     },
   });
+}
+
+function normalizeHistory(history: Array<{ role?: string; content?: string }> | undefined) {
+  return (history ?? [])
+    .filter(
+      (turn): turn is { role: "user" | "assistant"; content: string } =>
+        (turn.role === "user" || turn.role === "assistant") && typeof turn.content === "string" && Boolean(turn.content.trim()),
+    )
+    .slice(-8)
+    .map((turn) => ({
+      role: turn.role,
+      content: turn.content.trim().slice(0, 1_500),
+    }));
 }
 
 function toServerEvent(event: string, value: unknown) {

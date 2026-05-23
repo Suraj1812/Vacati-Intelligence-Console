@@ -1,19 +1,31 @@
 "use client";
 
 import Image from "next/image";
-import { BookOpen, Gauge, Link2, Sparkles } from "lucide-react";
+import { BookOpen, Check, Copy, Gauge, Link2, RotateCcw, Sparkles } from "lucide-react";
 import { motion } from "framer-motion";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { useState } from "react";
 
 import type { ChatMessage as ChatMessageType } from "@/lib/ai/types";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 
 type ChatMessageProps = {
   message: ChatMessageType;
   isStreaming?: boolean;
+  onRegenerate?: () => void;
 };
 
-export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
+export function ChatMessage({ message, isStreaming, onRegenerate }: ChatMessageProps) {
   const isAssistant = message.role === "assistant";
+  const [copied, setCopied] = useState(false);
+
+  async function copyMessage() {
+    await navigator.clipboard.writeText(message.content);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  }
 
   return (
     <motion.article
@@ -36,10 +48,37 @@ export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
             </div>
             <div className="min-w-0 flex-1">
               {message.content ? (
-                <p className="whitespace-pre-wrap text-[15px] leading-7 text-zinc-100">{message.content}</p>
+                <MarkdownContent content={message.content} />
               ) : (
                 <LoadingLine />
               )}
+              {message.content ? (
+                <div className="mt-4 flex items-center gap-1">
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 rounded-md text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-100"
+                    onClick={copyMessage}
+                    aria-label="Copy response"
+                  >
+                    {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  </Button>
+                  {onRegenerate ? (
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 rounded-md text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-100"
+                      onClick={onRegenerate}
+                      disabled={isStreaming}
+                      aria-label="Regenerate response"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
         ) : (
@@ -51,6 +90,56 @@ export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
         ) : null}
       </div>
     </motion.article>
+  );
+}
+
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <div className="max-w-none space-y-3 text-[15px] leading-7 text-zinc-100 [&_code]:rounded [&_code]:bg-white/[0.08] [&_code]:px-1 [&_code]:py-0.5 [&_li]:text-zinc-200 [&_ol]:list-decimal [&_ol]:pl-5 [&_strong]:text-zinc-50 [&_ul]:list-disc [&_ul]:pl-5">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ children, href }) => (
+            <a href={href} target="_blank" rel="noreferrer" className="text-sky-200 underline decoration-sky-200/30 underline-offset-4">
+              {children}
+            </a>
+          ),
+          code: ({ children, className }) => {
+            const inline = !className;
+            if (inline) return <code>{children}</code>;
+            return <CodeBlock code={String(children).replace(/\n$/, "")} className={className} />;
+          },
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function CodeBlock({ code, className }: { code: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  const language = className?.replace("language-", "") ?? "text";
+
+  async function copyCode() {
+    await navigator.clipboard.writeText(code);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  }
+
+  return (
+    <div className="my-4 overflow-hidden rounded-md border border-white/[0.08] bg-[#0b0c0a]">
+      <div className="flex items-center justify-between border-b border-white/[0.08] px-3 py-2 text-xs text-zinc-500">
+        <span>{language}</span>
+        <button type="button" onClick={copyCode} className="inline-flex items-center gap-1.5 text-zinc-400 hover:text-zinc-100">
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          Copy
+        </button>
+      </div>
+      <pre className="overflow-x-auto p-4 text-sm leading-6 text-zinc-100">
+        <code>{code}</code>
+      </pre>
+    </div>
   );
 }
 
